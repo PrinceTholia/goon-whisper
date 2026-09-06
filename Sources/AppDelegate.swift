@@ -163,12 +163,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         let bt = UserDefaults.standard.bool(forKey: "backtrackEnabled")
         if controller.useBacktrack != bt { controller.useBacktrack = bt }
 
-        // Settings may flip Live off when switching to Groq
+        // Settings may flip Live / Correction when switching providers
         let liveUD = UserDefaults.standard.object(forKey: "useLiveSTT") as? Bool ?? false
         if controller.useLiveSTT != liveUD { controller.useLiveSTT = liveUD }
+        if UserDefaults.standard.object(forKey: "useCorrection") != nil {
+            let corrUD = UserDefaults.standard.bool(forKey: "useCorrection")
+            if controller.useCorrection != corrUD { controller.useCorrection = corrUD }
+        }
 
         Self.syncCloudProviders()
 
+        // One-time: upgrade Groq turbo → large-v3 for accuracy
+        if !UserDefaults.standard.bool(forKey: "groqLargeV3Migrate") {
+            let groq = STTRegistry.provider(id: "groq")
+            let saved = STTSettings.savedModel(for: groq)
+            if saved.isEmpty || saved.contains("turbo") {
+                STTSettings.saveModel("whisper-large-v3", for: groq)
+            }
+            UserDefaults.standard.set(true, forKey: "groqLargeV3Migrate")
+        }
         cloudItem.state = controller.useCloudSTT ? .on : .off
         cloudItem.title = "STT: Cloud (\(STTSettings.current.name))"
         liveItem.state = controller.useLiveSTT ? .on : .off

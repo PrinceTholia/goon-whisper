@@ -251,6 +251,14 @@ class CloudTranscriptionService {
             field(langField, lang)
         }
 
+        // Groq / OpenAI Whisper: lower temperature + vocabulary prompt cuts random mishears
+        if p.style == .openAI {
+            field("temperature", "0")
+            if let prompt = Self.whisperBiasPrompt(for: p) {
+                field("prompt", prompt)
+            }
+        }
+
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
@@ -283,5 +291,22 @@ class CloudTranscriptionService {
                 completion(.failure(.fromHTTP(status: status, data: data, headers: http?.allHeaderFields)))
             }
         }.resume()
+    }
+
+    /// Whisper `prompt` biases toward dictionary terms and discourages filler hallucination.
+    private static func whisperBiasPrompt(for p: STTProvider) -> String? {
+        var bits: [String] = []
+        if p.id == "groq" || p.id == "openai" {
+            bits.append("Clean dictation. Prefer exact words spoken; do not add filler like good, yeah, um.")
+        }
+        var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 50)
+        if let app = FocusMemory.lastAppName, !app.isEmpty {
+            vocab.insert(app, at: 0)
+        }
+        if !vocab.isEmpty {
+            bits.append("Vocabulary: " + vocab.joined(separator: ", ") + ".")
+        }
+        let prompt = bits.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return prompt.isEmpty ? nil : String(prompt.prefix(800))
     }
 }

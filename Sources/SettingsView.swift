@@ -197,7 +197,7 @@ struct SettingsView: View {
         case .gemini:
             return "STT: \(activeSTT.defaultModel) (SMART) · optional AI Correction: \(activeLLM.defaultModel). Live streaming is Gemini-only (menu)."
         case .groq:
-            return "STT: \(activeSTT.defaultModel) · optional AI Correction: \(activeLLM.defaultModel). Usually higher free-tier limits than Gemini."
+            return "STT: whisper-large-v3 (more accurate than turbo) · AI Correction on by default to fix mishears. Paste your Groq key below."
         }
     }
 
@@ -242,9 +242,19 @@ struct SettingsView: View {
     private func applyProviderSelection() {
         STTSettings.providerID = provider.sttID
         LLMSettings.providerID = provider.llmID
-        // Live STT only makes sense for Gemini
-        if provider == .groq {
+        switch provider {
+        case .groq:
+            // Accuracy: full Whisper large-v3 + Llama cleanup (turbo hallucinates more)
+            let groqSTT = STTRegistry.provider(id: "groq")
+            let saved = STTSettings.savedModel(for: groqSTT)
+            if saved.isEmpty || saved.contains("turbo") {
+                STTSettings.saveModel("whisper-large-v3", for: groqSTT)
+            }
             UserDefaults.standard.set(false, forKey: "useLiveSTT")
+            UserDefaults.standard.set(true, forKey: "useCorrection")
+        case .gemini:
+            // SMART mode usually enough; leave correction as user left it
+            break
         }
     }
 

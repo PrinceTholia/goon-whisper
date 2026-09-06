@@ -35,7 +35,8 @@ class TextCorrectionService: ObservableObject {
         You are a text correction assistant for speech-to-text output, which often contains
         misheard words and missing punctuation.
         Your tasks:
-        - Fix misheard/garbled words based on context
+        - Fix misheard/garbled words based on context (e.g. "sentence numbers" → "sentence only" when that fits)
+        - Remove spurious filler words the STT invented (random "good", "yeah", "um") if they break the meaning
         - Add punctuation and spacing to improve readability
         - Do NOT add new content, summarize, translate, or change word endings/speaker gender
         - Return ONLY the corrected text — no explanations, no quotation marks
