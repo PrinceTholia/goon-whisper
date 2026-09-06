@@ -14,6 +14,7 @@ final class GeminiLiveTranscriptionService {
     private var startCompletion: ((Result<Void, DictationAPIError>) -> Void)?
     private var closed = false
     private var receiveLoopStarted = false
+    private var finishDeadlineWork: DispatchWorkItem?
 
     func start(apiKey: String, vocabulary: [String],
                completion: @escaping (Result<Void, DictationAPIError>) -> Void) {
@@ -51,8 +52,7 @@ final class GeminiLiveTranscriptionService {
             self.sendJSON(setup)
         }
 
-        // Fail start if setup never completes
-        DispatchQueue.global().asyncAfter(deadline: .now() + 12) { [weak self] in
+        DispatchQueue.global().asyncAfter(deadline: .now() + 8) { [weak self] in
             self?.sync.async {
                 guard let self, !self.setupComplete, let c = self.startCompletion else { return }
                 self.startCompletion = nil
@@ -62,14 +62,16 @@ final class GeminiLiveTranscriptionService {
         }
     }
 
-    /// Append 16-bit little-endian mono PCM @ 16 kHz.
     func sendPCM(_ data: Data) {
         guard !data.isEmpty else { return }
         sync.async {
             if self.setupComplete {
                 self.emitPCM(data)
             } else {
-                self.pendingPCM.append(data)
+                // Cap backlog so a late setup doesn't flood the socket
+                if self.pendingPCM.count < 200 {
+                    self.pendingPCM.append(data)
+                }
             }
         }
     }
@@ -77,33 +79,40 @@ final class GeminiLiveTranscriptionService {
     func finish(completion: @escaping (Result<String, DictationAPIError>) -> Void) {
         sync.async {
             self.finishCompletion = completion
-            if self.setupComplete {
-                self.sendJSON(["realtimeInput": ["audioStreamEnd": true]])
-            } else {
-                // Never got setup — fail so caller can fall back to batch
+            guard self.setupComplete else {
                 self.finishCompletion = nil
                 completion(.failure(.network("Live STT not ready")))
                 self.teardown()
                 return
             }
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 20) { [weak self] in
-            self?.sync.async {
-                guard let self, let c = self.finishCompletion else { return }
+            // Already have a final from streaming? Return immediately.
+            if let text = self.finals.last, !text.isEmpty {
                 self.finishCompletion = nil
-                let text = self.bestTranscript()
                 self.teardown()
-                if text.isEmpty {
-                    c(.failure(.emptyResponse))
-                } else {
-                    c(.success(text))
+                completion(.success(text))
+                return
+            }
+            self.sendJSON(["realtimeInput": ["audioStreamEnd": true]])
+
+            // Short deadline — DictationController also races batch in parallel.
+            let work = DispatchWorkItem { [weak self] in
+                self?.sync.async {
+                    guard let self, let c = self.finishCompletion else { return }
+                    self.finishCompletion = nil
+                    let text = self.bestTranscript()
+                    self.teardown()
+                    c(text.isEmpty ? .failure(.emptyResponse) : .success(text))
                 }
             }
+            self.finishDeadlineWork = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2.5, execute: work)
         }
     }
 
     func cancel() {
         sync.async {
+            self.finishDeadlineWork?.cancel()
+            self.finishDeadlineWork = nil
             self.finishCompletion = nil
             self.startCompletion = nil
             self.teardown()
@@ -113,6 +122,8 @@ final class GeminiLiveTranscriptionService {
     // MARK: - Internals
 
     private func resetState() {
+        finishDeadlineWork?.cancel()
+        finishDeadlineWork = nil
         setupComplete = false
         pendingPCM.removeAll()
         lastInterim = ""
@@ -125,6 +136,18 @@ final class GeminiLiveTranscriptionService {
     private func bestTranscript() -> String {
         if let last = finals.last, !last.isEmpty { return last }
         return lastInterim.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func completeFinishIfPossible() {
+        guard let c = finishCompletion else { return }
+        let text = bestTranscript()
+        guard !text.isEmpty else { return }
+        // Prefer a finalized segment; accept strong interim only after audioStreamEnd (finishCompletion set)
+        finishDeadlineWork?.cancel()
+        finishDeadlineWork = nil
+        finishCompletion = nil
+        teardown()
+        c(.success(text))
     }
 
     private func emitPCM(_ data: Data) {
@@ -168,6 +191,7 @@ final class GeminiLiveTranscriptionService {
                             self.startCompletion = nil
                             c(.failure(.network(err.localizedDescription)))
                         } else if let c = self.finishCompletion {
+                            self.finishDeadlineWork?.cancel()
                             self.finishCompletion = nil
                             let text = self.bestTranscript()
                             c(text.isEmpty ? .failure(.network(err.localizedDescription)) : .success(text))
@@ -216,6 +240,7 @@ final class GeminiLiveTranscriptionService {
                     self.startCompletion = nil
                     c(.failure(.network(msg)))
                 } else if let c = self.finishCompletion {
+                    self.finishDeadlineWork?.cancel()
                     self.finishCompletion = nil
                     c(.failure(.network(msg)))
                 }
@@ -233,21 +258,25 @@ final class GeminiLiveTranscriptionService {
                let t = final["text"] as? String, !t.isEmpty {
                 self.finals.append(t)
                 self.lastInterim = t
+                // Finish as soon as we have a finalized segment after stop.
+                if self.finishCompletion != nil {
+                    self.completeFinishIfPossible()
+                    return
+                }
             }
 
             let genDone = (sc["generationComplete"] as? Bool) == true
             let turnDone = (sc["turnComplete"] as? Bool) == true
-            if genDone || turnDone, let c = self.finishCompletion {
-                self.finishCompletion = nil
-                let text = self.bestTranscript()
-                self.teardown()
-                c(text.isEmpty ? .failure(.emptyResponse) : .success(text))
+            if (genDone || turnDone), self.finishCompletion != nil {
+                self.completeFinishIfPossible()
             }
         }
     }
 
     private func teardown() {
         closed = true
+        finishDeadlineWork?.cancel()
+        finishDeadlineWork = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         session?.invalidateAndCancel()

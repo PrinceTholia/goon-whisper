@@ -54,12 +54,12 @@ class DictationController: ObservableObject {
     init() {
         useBacktrack = UserDefaults.standard.bool(forKey: Self.backtrackKey) // default false
 
-        // One-time quality defaults for Gemini SMART / Live
-        if !UserDefaults.standard.bool(forKey: "qualityDefaults130") {
+        // Prefer fast batch by default — Live can hang; menu can re-enable streaming.
+        if !UserDefaults.standard.bool(forKey: "qualityDefaults131") {
             UserDefaults.standard.set(false, forKey: Self.correctionKey)
-            UserDefaults.standard.set(true, forKey: Self.liveKey)
+            UserDefaults.standard.set(false, forKey: Self.liveKey)
             UserDefaults.standard.set("auto", forKey: Self.languageKey)
-            UserDefaults.standard.set(true, forKey: "qualityDefaults130")
+            UserDefaults.standard.set(true, forKey: "qualityDefaults131")
         }
 
         if UserDefaults.standard.object(forKey: Self.correctionKey) == nil {
@@ -135,7 +135,7 @@ class DictationController: ObservableObject {
         status = "⏳ Processing…"
         stage = .transcribing
 
-        // Always keep WAV for batch fallback; Live runs in parallel when ready.
+        // Always keep WAV for batch; race Live vs batch so we never wait on a hung socket.
         let live = liveSTT
         let wasLive = liveActive
         liveSTT = nil
@@ -144,21 +144,47 @@ class DictationController: ObservableObject {
 
         if let live, wasLive {
             processing = true
-            // Publish file URL is suppressed briefly — we handle both paths here
-            let url = recorder.consumeRecordingURL()
+            guard let url = recorder.consumeRecordingURL() else {
+                live.cancel()
+                afterSTT(.failure(.emptyResponse))
+                return
+            }
+
+            let gate = STTRaceGate()
             live.finish { [weak self] result in
                 guard let self else { return }
-                switch result {
-                case .success(let text) where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                    if let url { try? FileManager.default.removeItem(at: url) }
+                if case .success(let text) = result,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   gate.claimWin() {
+                    live.cancel()
+                    try? FileManager.default.removeItem(at: url)
+                    print("✅ Live STT won race")
                     self.afterSTT(.success(text))
-                case .success, .failure:
-                    print("⚠️ Live STT empty/failed — falling back to batch")
-                    if let url {
-                        self.handleAudio(url)
-                    } else {
-                        self.afterSTT(.failure(.emptyResponse))
-                    }
+                } else if case .failure(let err) = result, gate.claimLoss() {
+                    try? FileManager.default.removeItem(at: url)
+                    self.afterSTT(.failure(err))
+                } else if case .success = result, gate.claimLoss() {
+                    try? FileManager.default.removeItem(at: url)
+                    self.afterSTT(.failure(.emptyResponse))
+                }
+            }
+            cloud.transcribe(fileURL: url, language: language) { [weak self] result in
+                guard let self else { return }
+                if case .success(let text) = result,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   gate.claimWin() {
+                    live.cancel()
+                    try? FileManager.default.removeItem(at: url)
+                    print("✅ Batch STT won race")
+                    self.afterSTT(.success(text))
+                } else if case .failure(let err) = result, gate.claimLoss() {
+                    live.cancel()
+                    try? FileManager.default.removeItem(at: url)
+                    self.afterSTT(.failure(err))
+                } else if case .success = result, gate.claimLoss() {
+                    live.cancel()
+                    try? FileManager.default.removeItem(at: url)
+                    self.afterSTT(.failure(.emptyResponse))
                 }
             }
             return
@@ -330,5 +356,26 @@ class DictationController: ObservableObject {
             .replacingOccurrences(of: "\\s+([,.!?])", with: "$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return result
+    }
+}
+
+/// First successful STT result wins; errors only surface after both paths fail.
+private final class STTRaceGate {
+    private let lock = NSLock()
+    private var won = false
+    private var losses = 0
+
+    func claimWin() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if won { return false }
+        won = true
+        return true
+    }
+
+    func claimLoss() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if won { return false }
+        losses += 1
+        return losses >= 2
     }
 }
