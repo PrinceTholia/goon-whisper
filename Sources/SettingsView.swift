@@ -95,7 +95,7 @@ struct SettingsView: View {
 
                     Text("1. Keyboard → Dictation → Shortcut → Off (macOS Dictation steals Fn twice, pauses music, shows fake live text).")
                         .font(.caption2).foregroundColor(.secondary)
-                    Text("2. Privacy → Accessibility → remove old Whisper → add /Applications/Whisper.app → ON → use Restart Whisper (menu).")
+                    Text("2. Privacy → Accessibility → add /Applications/Whisper.app → ON (only needed again if the signing identity changes; ad-hoc rebuilds always reset it).")
                         .font(.caption2).foregroundColor(.secondary)
                     Text("3. Privacy → Automation → Whisper → System Events ON (needed for auto-paste).")
                         .font(.caption2).foregroundColor(.secondary)

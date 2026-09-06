@@ -29,6 +29,9 @@ enum PasteOutcome: Equatable {
 /// Critical: never open System Settings during paste — that steals focus and
 /// makes ⌘V land nowhere. Also: do not gate on `AXIsProcessTrusted()` alone;
 /// ad-hoc builds often report false even when Accessibility is enabled.
+///
+/// Paste strategies are **mutually exclusive** — never stack AX + ⌘V + System Events
+/// (that caused double-paste in Chrome/Spotify/Electron).
 enum Paster {
     private static let terminalBundleIDs: Set<String> = [
         "com.apple.Terminal",
@@ -45,6 +48,10 @@ enum Paster {
     private static let didPromptKey = "whisper.didPromptAccessibility"
     private static let didAttemptPromptKey = "whisper.didAttemptAXPrompt"
     private static let exeTokenKey = "whisper.executableToken"
+
+    /// Serializes paste so overlapping finishes can't fire two ⌘Vs.
+    private static let pasteLock = NSLock()
+    private static var pasteGeneration: UInt64 = 0
 
     /// True when Accessibility APIs actually respond (stronger than AXIsProcessTrusted for ad-hoc).
     static var canUseAccessibilityAPIs: Bool {
@@ -64,6 +71,11 @@ enum Paster {
     static func paste(_ text: String) -> PasteOutcome {
         guard !text.isEmpty else { return .copiedOnly }
 
+        pasteLock.lock()
+        pasteGeneration &+= 1
+        let generation = pasteGeneration
+        pasteLock.unlock()
+
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
@@ -74,32 +86,44 @@ enum Paster {
         }
 
         if isTerminalApp(target) {
-            pasteIntoTerminal(app: target)
+            pasteIntoTerminal(app: target, generation: generation)
             return .inserted
         }
 
-        if isWhatsApp(target) {
-            pasteIntoWhatsApp(app: target)
+        // WebViews / Electron: AX insert is unreliable (false success or no-op).
+        // Single delayed ⌘V only — never follow with System Events.
+        if prefersCommandVOnly(target) {
+            pasteCommandVOnly(delay: 0.22, generation: generation, label: target?.localizedName ?? "web")
             return .inserted
         }
 
-        // Normal apps: NEVER open Settings here (steals focus).
-        // NEVER skip paste because AXIsProcessTrusted() lied.
-        // Do NOT activateIgnoringOtherApps — that breaks caret focus.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            // 1) Prefer direct AX insert when APIs work
+        // Native apps: try AX once; if that fails, ⌘V once. Never both backups.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard Self.isCurrentPaste(generation) else { return }
             if insertViaAccessibility(text) {
                 print("✅ Paste via AX insert")
                 return
             }
-            // 2) Simulated ⌘V (needs Accessibility TCC for this binary)
+            guard Self.isCurrentPaste(generation) else { return }
             simulateCommandV()
-            // 3) System Events backup after a beat (needs Automation)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                _ = pasteViaSystemEvents(processName: target?.localizedName)
-            }
+            print("✅ Paste via ⌘V")
         }
         return .inserted
+    }
+
+    private static func isCurrentPaste(_ generation: UInt64) -> Bool {
+        pasteLock.lock()
+        let ok = pasteGeneration == generation
+        pasteLock.unlock()
+        return ok
+    }
+
+    private static func pasteCommandVOnly(delay: TimeInterval, generation: UInt64, label: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard isCurrentPaste(generation) else { return }
+            simulateCommandV()
+            print("✅ \(label) paste via ⌘V only")
+        }
     }
 
     private static func isWhatsApp(_ app: NSRunningApplication?) -> Bool {
@@ -109,14 +133,19 @@ enum Paster {
         return name.contains("whatsapp")
     }
 
-    /// WhatsApp’s composer is a Chromium/Electron field. AX insert often returns
-    /// success but writes nothing, which used to skip ⌘V. Don’t activate the app
-    /// (that can move focus out of the message box). Clipboard + delayed ⌘V only.
-    private static func pasteIntoWhatsApp(app _: NSRunningApplication?) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            simulateCommandV()
-            print("✅ WhatsApp paste via ⌘V (skipped AX insert)")
-        }
+    /// Browsers, Electron, and similar — ⌘V only (same class as WhatsApp composer).
+    private static func prefersCommandVOnly(_ app: NSRunningApplication?) -> Bool {
+        if isWhatsApp(app) { return true }
+        let id = (app?.bundleIdentifier ?? "").lowercased()
+        let name = (app?.localizedName ?? "").lowercased()
+        let needles = [
+            "chrome", "chromium", "firefox", "safari", "edge", "brave", "opera", "arc",
+            "spotify", "discord", "slack", "notion", "figma", "electron",
+            "code", "cursor", "spotify", "microsoft.edgemac", "com.apple.Safari",
+            "company.thebrowser.Browser", "browser",
+        ]
+        if needles.contains(where: { id.contains($0) || name.contains($0) }) { return true }
+        return false
     }
 
     private static func isTerminalApp(_ app: NSRunningApplication?) -> Bool {
@@ -129,13 +158,22 @@ enum Paster {
             || name.contains("wezterm") || name.contains("hyper")
     }
 
-    private static func pasteIntoTerminal(app: NSRunningApplication?) {
+    private static func pasteIntoTerminal(app: NSRunningApplication?, generation: UInt64) {
         let processName = app?.localizedName ?? "Terminal"
         app?.activate(options: [.activateIgnoringOtherApps])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            if pasteViaMenu(processName: processName) { return }
-            if pasteViaSystemEvents(processName: processName) { return }
+            guard isCurrentPaste(generation) else { return }
+            // One strategy only — stop after the first success
+            if pasteViaMenu(processName: processName) {
+                print("✅ Terminal paste via Edit → Paste")
+                return
+            }
+            if pasteViaSystemEvents(processName: processName) {
+                print("✅ Terminal paste via System Events")
+                return
+            }
             simulateCommandV()
+            print("✅ Terminal paste via ⌘V")
         }
     }
 

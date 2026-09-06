@@ -294,15 +294,17 @@ class CloudTranscriptionService {
     }
 
     /// Whisper `prompt` biases toward dictionary terms and discourages filler hallucination.
+    /// Do NOT list near-homophone acronyms (e.g. STT) — Whisper will force them over STD/etc.
     private static func whisperBiasPrompt(for p: STTProvider) -> String? {
         var bits: [String] = []
         if p.id == "groq" || p.id == "openai" {
             bits.append("Clean dictation. Prefer exact words spoken; do not add filler like good, yeah, um.")
-            bits.append("Acronyms: STT, API, Groq, Gemini, Whisper.")
+            bits.append("Keep acronyms exactly as spoken; do not substitute similar letter sequences.")
+            bits.append("Product names: Groq, Gemini, Whisper.")
         }
         var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 50)
-        // Always bias common app terms even if dictionary is empty
-        for term in ["STT", "Groq", "Gemini", "Whisper", "API"] {
+        // Bias product names only — never STT (collides with STD when spoken)
+        for term in ["Groq", "Gemini", "Whisper", "API"] {
             if !vocab.contains(where: { $0.caseInsensitiveCompare(term) == .orderedSame }) {
                 vocab.append(term)
             }

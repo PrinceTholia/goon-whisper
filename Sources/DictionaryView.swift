@@ -23,7 +23,7 @@ struct DictionaryView: View {
                 Text("Custom Dictionary")
                     .font(.title3).bold()
 
-                Text("Words the STT keeps mis-transcribing — enter what it got wrong and what it should be, then press +. Add/remove takes effect instantly.")
+                Text("Hard fixes: wrong → right (always replace). Sound-alikes (think/thing/theme): edit ~/.whisperapp/dictionary.txt with a line like  ~ think | thing | theme  — AI Correction picks by sentence context.")
                     .font(.caption).foregroundColor(.secondary)
 
                 HStack(spacing: 8) {
@@ -100,12 +100,22 @@ struct DictionaryView: View {
     }
 
     private func saveDict() {
-        let text = dictRules
-            .map { "\($0.from) -> \($0.to)" }
-            .joined(separator: "\n")
+        // Keep comments + sound-alike (~) lines; only rewrite wrong→right rules from the UI.
+        let existing = (try? String(contentsOfFile: Self.dictPath, encoding: .utf8)) ?? ""
+        var keep: [String] = []
+        for line in existing.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("~") {
+                keep.append(String(line))
+            }
+        }
+        while keep.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { keep.removeLast() }
+        var lines = keep
+        if !lines.isEmpty { lines.append("") }
+        lines.append(contentsOf: dictRules.map { "\($0.from) -> \($0.to)" })
+        let text = lines.joined(separator: "\n") + "\n"
         try? FileManager.default.createDirectory(atPath: KeyStore.dir, withIntermediateDirectories: true)
         try? text.write(toFile: Self.dictPath, atomically: true, encoding: .utf8)
-        // อัปเดต mtime ให้ CorrectionDictionary reload ในครั้งถัดไป
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: Self.dictPath)
     }
 

@@ -71,6 +71,16 @@ class HotkeyManager {
     private(set) var handsFreeActive = false
     private var pendingHoldStop: DispatchWorkItem?
 
+    /// Clear hands-free without simulating a Fn tap (used by pill ✕ / stop).
+    func endHandsFreeSession() {
+        guard handsFreeActive else { return }
+        handsFreeActive = false
+        pendingHoldStop?.cancel()
+        pendingHoldStop = nil
+        lastModifierPress = 0
+        onHandsFreeChanged?(false)
+    }
+
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
     var isActive: (() -> Bool)?

@@ -18,6 +18,8 @@ enum Stage: Equatable {
 /// Orchestrates everything: record → transcribe (cloud/local) → correct (LLM) → paste into focused app
 class DictationController: ObservableObject {
     @Published var isRecording = false
+    /// True while double-tap Fn hands-free session is active (shows X / stop on pill).
+    @Published var handsFreeUI = false
     @Published var status = ""
     @Published var stage: Stage = .idle
     @Published var useCloudSTT = true
@@ -126,6 +128,26 @@ class DictationController: ObservableObject {
             status = "❌ Microphone unavailable"
             stage = .error("Microphone unavailable")
         }
+    }
+
+
+    /// Abort recording without pasting (hands-free ✕).
+    func cancelRecording() {
+        guard recorder.isRecording || stage == .recording else {
+            stage = .idle
+            isRecording = false
+            return
+        }
+        liveSTT?.cancel()
+        liveSTT = nil
+        liveActive = false
+        recorder.onPCMChunk = nil
+        recorder.stopRecording(publishFile: false)
+        isRecording = false
+        processing = false
+        status = "Cancelled"
+        stage = .idle
+        FeedbackSound.playStop()
     }
 
     func stop() {
@@ -265,7 +287,6 @@ class DictationController: ObservableObject {
     private func finishOnMain(_ text: String) {
         DispatchQueue.main.async {
             let final = CorrectionDictionary.shared.apply(to: text)
-            let snippet = String(final.prefix(28))
             self.processing = false
 
             let outcome = Paster.paste(final)
@@ -275,17 +296,18 @@ class DictationController: ObservableObject {
 
             switch outcome {
             case .inserted:
+                // Paste immediately — no transcript preview pill (Wispr-style vanish)
                 self.status = "✅ Pasted"
-                self.stage = .done(snippet.isEmpty ? "Pasted" : snippet)
+                self.stage = .done("")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    if case .done = self?.stage { self?.stage = .idle }
+                }
             case .copiedOnly:
                 self.status = "Copied — press ⌘V to paste"
                 self.stage = .copied
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + (outcome == .copiedOnly ? 2.8 : 1.0)) { [weak self] in
-                guard let self = self else { return }
-                if case .done = self.stage { self.stage = .idle }
-                if case .copied = self.stage { self.stage = .idle }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                    if case .copied = self?.stage { self?.stage = .idle }
+                }
             }
         }
     }

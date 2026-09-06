@@ -36,9 +36,11 @@ class TextCorrectionService: ObservableObject {
         misheard words and missing punctuation.
         Your tasks:
         - Fix misheard/garbled words based on context (e.g. "sentence numbers" → "sentence only" when that fits)
+        - Disambiguate sound-alikes using the WHOLE sentence (think vs thing vs theme; their vs there; etc.)
         - Remove spurious filler words the STT invented (random "good", "yeah", "um") if they break the meaning
         - Add punctuation and spacing to improve readability
         - Do NOT add new content, summarize, translate, or change word endings/speaker gender
+        - Preserve acronyms and initialisms exactly (STD vs STT, API, etc.) unless the user's dictionary maps them or sentence meaning is unambiguous
         - Return ONLY the corrected text — no explanations, no quotation marks
         \(langHint)
         """
@@ -56,6 +58,11 @@ class TextCorrectionService: ObservableObject {
             Do NOT remove the word "actually" when it is part of meaning
             (e.g. "I actually enjoyed it" stays intact).
             """
+        }
+
+        let confusable = CorrectionDictionary.shared.confusableHintForPrompt
+        if !confusable.isEmpty {
+            systemPrompt += "\n\n" + confusable
         }
 
         let hint = CorrectionDictionary.shared.hintForPrompt

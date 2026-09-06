@@ -371,7 +371,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     private func setupPanel() {
         let hosting = NSHostingView(rootView: FloatingStatusView(controller: controller))
-        let rect = NSRect(x: 0, y: 0, width: 260, height: 72)
+        let rect = NSRect(x: 0, y: 0, width: 168, height: 40)
         panel = NSPanel(contentRect: rect,
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
@@ -385,14 +385,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         panel.contentView = hosting
     }
 
+    /// Screen that currently contains the mouse — so the pill follows the active display.
+    private func screenUnderCursor() -> NSScreen {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
+    }
+
     private func showPanel() {
-        if let screen = NSScreen.main {
-            let f = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(x: f.midX - panel.frame.width / 2,
-                                         y: f.minY + 72))
-        }
-        // Resize panel to fit current hosting view
-        panel.setContentSize(NSSize(width: 260, height: 72))
+        let screen = screenUnderCursor()
+        let f = screen.visibleFrame
+        let wide = controller.handsFreeUI || HotkeyManager.shared.handsFreeActive
+        let size = NSSize(width: wide ? 168 : 140, height: 40)
+        panel.setContentSize(size)
+        // Bottom-center of the display under the cursor (Wispr-style)
+        panel.setFrameOrigin(NSPoint(
+            x: f.midX - size.width / 2,
+            y: f.minY + 40
+        ))
+        panel.ignoresMouseEvents = !wide
         panel.orderFrontRegardless()
     }
 
@@ -442,8 +454,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         mgr.onHandsFreeChanged = { [weak self] active in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.controller.handsFreeUI = active
+                // Hands-free needs clicks on ✕ / stop; hold-to-talk stays click-through
+                self.panel.ignoresMouseEvents = !active
                 if active {
-                    self.controller.status = "Hands-free — tap Fn to stop"
+                    self.controller.status = "Hands-free — ✕ cancel · ■ stop (or tap Fn)"
+                    self.showPanel()
                 } else if self.controller.status.hasPrefix("Hands-free") {
                     self.controller.status = ""
                 }

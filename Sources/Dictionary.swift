@@ -4,29 +4,46 @@ import Foundation
 ///
 /// Backed by a plain-text file at `~/.whisperapp/dictionary.txt`:
 ///
-///     # one rule per line:  wrong -> right      (# = comment)
-///     เกมส์ -> Game
-///     gamezxz -> Gamezxz
-///     บิทคอย -> Bitcoin
+///     # comments
+///     wrong -> right                 # always replace
+///     ~ think | thing | theme        # sound-alikes: AI picks by sentence context
 ///
-/// Used two ways:
-///  - `hintForPrompt`: appended to the LLM correction system prompt so it knows the
-///    user's own terms (handles fuzzy/garbled cases the deterministic pass can't).
-///  - `apply(to:)`:    deterministic phrase replace as the final pass before paste,
-///    guaranteeing the user's certain corrections always land — even with correction off.
+/// Used three ways:
+///  - `hintForPrompt` / `confusableHintForPrompt`: LLM correction context
+///  - `vocabularyHints`: bias Whisper / Gemini toward valid spellings
+///  - `apply(to:)`: deterministic replace before paste (rules only — never confusables)
 ///
-/// Matching rules:
-///  - `from` is pure ASCII  → `\b`-bounded, case-insensitive regex (English proper nouns).
-///  - `from` has non-ASCII  → exact substring, case-sensitive (Thai has no word boundaries).
-/// Rules apply in file order.
+/// Matching rules for `wrong -> right`:
+///  - `from` is pure ASCII  → `\b`-bounded, case-insensitive regex
+///  - `from` has non-ASCII  → exact substring, case-sensitive
 final class CorrectionDictionary {
     static let shared = CorrectionDictionary()
 
     private struct Rule { let from: String; let to: String; let isASCII: Bool }
 
+    /// Built-in English near-homophones the LLM may disambiguate by context.
+    /// Never force a single winner — all members are valid vocabulary.
+    static let builtInConfusables: [[String]] = [
+        ["think", "thing", "theme"],
+        ["their", "there", "they're"],
+        ["your", "you're"],
+        ["its", "it's"],
+        ["affect", "effect"],
+        ["then", "than"],
+        ["weather", "whether"],
+        ["accept", "except"],
+        ["lose", "loose"],
+        ["quiet", "quite"],
+        ["principal", "principle"],
+        ["STT", "STD"],
+        ["Groq", "Grok", "grog"],
+    ]
+
     private static var path: String { KeyStore.dir + "/dictionary.txt" }
 
     private var rules: [Rule] = []
+    private var userConfusables: [[String]] = []
+    private var preservedPreamble: [String] = [] // # comments + blank lines before first rule
     private var lastMtime: Date? = nil
     private let lock = NSLock()
 
@@ -42,28 +59,68 @@ final class CorrectionDictionary {
         lastMtime = mtime
 
         let raw = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        rules = Self.parse(raw)
+        let parsed = Self.parse(raw)
+        rules = parsed.rules
+        userConfusables = parsed.confusables
+        preservedPreamble = parsed.preamble
     }
 
-    private static func parse(_ raw: String) -> [Rule] {
-        var out: [Rule] = []
-        out.reserveCapacity(64)
+    private struct Parsed {
+        var rules: [Rule]
+        var confusables: [[String]]
+        var preamble: [String]
+    }
+
+    private static func parse(_ raw: String) -> Parsed {
+        var out = Parsed(rules: [], confusables: [], preamble: [])
+        out.rules.reserveCapacity(64)
+        var sawContent = false
         for line in raw.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                if !sawContent { out.preamble.append(String(line)) }
+                continue
+            }
+            if trimmed.hasPrefix("~") {
+                sawContent = true
+                let body = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+                let words = body.split(separator: "|").map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                }.filter { !$0.isEmpty }
+                if words.count >= 2 { out.confusables.append(words) }
+                continue
+            }
             guard let arrow = trimmed.range(of: "->") else { continue }
+            sawContent = true
             let from = String(trimmed[..<arrow.lowerBound]).trimmingCharacters(in: .whitespaces)
             let to   = String(trimmed[arrow.upperBound...]).trimmingCharacters(in: .whitespaces)
             if from.isEmpty || to.isEmpty { continue }
             let isASCII = from.unicodeScalars.allSatisfy { $0.isASCII }
-            out.append(Rule(from: from, to: to, isASCII: isASCII))
+            out.rules.append(Rule(from: from, to: to, isASCII: isASCII))
         }
         return out
     }
 
-    private func snapshot() -> [Rule] {
-        lock.lock(); reload(force: false); let r = rules; lock.unlock()
-        return r
+    private func snapshot() -> (rules: [Rule], confusables: [[String]]) {
+        lock.lock(); reload(force: false)
+        let r = rules
+        let c = userConfusables
+        lock.unlock()
+        return (r, c)
+    }
+
+    /// Built-in + user sound-alike groups (user groups first).
+    func confusableGroups() -> [[String]] {
+        let snap = snapshot()
+        var out = snap.confusables
+        var seen = Set(out.map { $0.map { $0.lowercased() }.sorted().joined(separator: "|") })
+        for g in Self.builtInConfusables {
+            let key = g.map { $0.lowercased() }.sorted().joined(separator: "|")
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            out.append(g)
+        }
+        return out
     }
 
     // MARK: - Public
@@ -145,17 +202,35 @@ final class CorrectionDictionary {
     }
 
     private func persistLocked() {
-        let text = rules.map { "\($0.from) -> \($0.to)" }.joined(separator: "\n") + "\n"
+        var lines: [String] = []
+        if preservedPreamble.isEmpty {
+            lines.append("# Personal STT dictionary")
+            lines.append("# wrong -> right          = always replace")
+            lines.append("# ~ word | word | word    = sound-alikes; AI picks by context")
+            lines.append("")
+        } else {
+            lines.append(contentsOf: preservedPreamble)
+            if let last = lines.last, !last.trimmingCharacters(in: .whitespaces).isEmpty {
+                lines.append("")
+            }
+        }
+        for g in userConfusables {
+            lines.append("~ " + g.joined(separator: " | "))
+        }
+        for r in rules {
+            lines.append("\(r.from) -> \(r.to)")
+        }
+        let text = lines.joined(separator: "\n") + "\n"
         try? FileManager.default.createDirectory(atPath: KeyStore.dir, withIntermediateDirectories: true)
         try? text.write(toFile: Self.path, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: Self.path)
         lastMtime = Date()
     }
 
-    /// Desired spellings / terms to bias Gemini STT (`custom_vocabulary`).
-    /// Prefer the "to" side of each rule, plus distinctive "from" tokens. Cap ~100.
+    /// Desired spellings / terms to bias Whisper / Gemini.
+    /// Includes dictionary "to" sides and all sound-alike group members.
     func vocabularyHints(limit: Int = 100) -> [String] {
-        let active = snapshot()
+        let snap = snapshot()
         var out: [String] = []
         var seen = Set<String>()
         func add(_ s: String) {
@@ -166,9 +241,13 @@ final class CorrectionDictionary {
             seen.insert(key)
             out.append(t)
         }
-        for r in active {
+        // Sound-alikes first so Whisper knows every variant is a real word
+        for g in confusableGroups() {
+            for w in g { add(w) }
+            if out.count >= limit { return out }
+        }
+        for r in snap.rules {
             add(r.to)
-            // Keep multi-word / proper-looking "from" only if different
             if r.from.count >= 3, r.from.rangeOfCharacter(from: .letters) != nil {
                 add(r.from)
             }
@@ -177,21 +256,19 @@ final class CorrectionDictionary {
         return out
     }
 
-    /// Deterministic replacement applied to the final text before paste.
+    /// Deterministic replacement applied to the final text before paste (rules only).
     func apply(to text: String) -> String {
-        let active = snapshot()
+        let active = snapshot().rules
         guard !active.isEmpty else { return text }
         var result = text
         for r in active {
             if r.isASCII {
-                // word-boundary, case-insensitive (escape both pattern & replacement template)
                 let pattern = "\\b" + NSRegularExpression.escapedPattern(for: r.from) + "\\b"
                 guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
                 let range = NSRange(result.startIndex..., in: result)
                 let template = NSRegularExpression.escapedTemplate(for: r.to)
                 result = re.stringByReplacingMatches(in: result, range: range, withTemplate: template)
             } else {
-                // Thai / mixed: exact substring, case-sensitive
                 result = result.replacingOccurrences(of: r.from, with: r.to)
             }
         }
@@ -200,8 +277,20 @@ final class CorrectionDictionary {
 
     /// Hint appended to the LLM correction prompt. Empty string when there are no rules.
     var hintForPrompt: String {
-        let active = snapshot()
+        let active = snapshot().rules
         guard !active.isEmpty else { return "" }
         return active.map { "- \($0.from) → \($0.to)" }.joined(separator: "\n")
+    }
+
+    /// Sound-alike groups for the LLM — pick by sentence meaning, never force.
+    var confusableHintForPrompt: String {
+        let groups = confusableGroups()
+        guard !groups.isEmpty else { return "" }
+        let listed = groups.prefix(20).map { "- " + $0.joined(separator: " / ") }.joined(separator: "\n")
+        return """
+        Sound-alike / near-homophone sets (STT often picks the wrong one):
+        \(listed)
+        If the transcript uses a word from a set but sentence meaning clearly wants another from the SAME set, swap it. If ambiguous, leave it unchanged. Do not invent unrelated words.
+        """
     }
 }
