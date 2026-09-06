@@ -2,6 +2,8 @@
 
 macOS menu-bar dictation (fork of Whisper / MyWhisperFlow) using **Google Gemini** instead of Groq.
 
+**Status (2026-09-06):** Verified working on macOS — Fn → `gemini-3.5-transcribe` (SMART) → paste. After each ad-hoc rebuild, re-grant Accessibility + Automation if paste fails (text still lands on clipboard).
+
 - Hold **Fn** → speak → `gemini-3.5-transcribe` → optional Gemini cleanup → paste
 - Bundle ID stays `com.game.whisperapp` so Accessibility grants still apply when testing
 
@@ -32,6 +34,11 @@ open Whisper.app
 ```
 
 Quality spike (optional): `tools/quality-spike/`
+
+## Repo
+
+Private GitHub repo: https://github.com/PrinceTholia/goon-whisper  
+Created with `gh repo create goon-whisper --private --source=. --remote=origin --push` from this folder (Gemini fork of MyWhisperFlow). MyWhisperFlow / Groq stays the fallback line.
 
 ## Fallback
 
