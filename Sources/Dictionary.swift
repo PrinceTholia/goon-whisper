@@ -130,7 +130,18 @@ final class CorrectionDictionary {
 
     private func looksLearnable(_ token: String) -> Bool {
         let stripped = token.trimmingCharacters(in: .punctuationCharacters)
-        return stripped.count >= 2
+        guard stripped.count >= 3 else { return false }
+        // Never auto-learn ultra-common glue words — those poison dictation.
+        let blocked: Set<String> = [
+            "a", "an", "the", "and", "or", "but", "if", "to", "of", "in", "on", "at",
+            "is", "are", "was", "were", "be", "been", "it", "this", "that", "with",
+            "for", "as", "by", "from", "we", "you", "they", "i", "me", "my", "our",
+            "only", "also", "just", "like", "have", "has", "had", "do", "does", "did",
+            "not", "no", "yes", "ok", "okay", "so", "then", "than", "too", "very",
+            "up", "out", "about", "into", "over", "after", "before", "other", "some",
+            "good", "check", "keep", "put", "them", "ones", "things", "maybe",
+        ]
+        return !blocked.contains(stripped.lowercased())
     }
 
     private func persistLocked() {

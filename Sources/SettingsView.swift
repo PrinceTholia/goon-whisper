@@ -138,7 +138,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .onChange(of: autoDictOn) { v in DictionaryLearner.isEnabled = v }
 
-                    Text("After paste, if you fix a word in the text field, that correction is learned automatically (needs Accessibility).")
+                    Text("Off by default. When on, post-paste edits can auto-add rules — leave off unless you trust it (bad rules rewrite good transcripts).")
                         .font(.caption2).foregroundColor(.secondary)
                 }
 

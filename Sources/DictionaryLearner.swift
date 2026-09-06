@@ -10,10 +10,10 @@ enum DictionaryLearner {
     private static var baseline = ""
     private static var pollsLeft = 0
 
-    /// Default ON — matches “learn when I fix a word after paste.”
+    /// Default OFF — auto-learn was poisoning the dictionary (e.g. only → numbers).
     static var isEnabled: Bool {
         get {
-            if UserDefaults.standard.object(forKey: enabledKey) == nil { return true }
+            if UserDefaults.standard.object(forKey: enabledKey) == nil { return false }
             return UserDefaults.standard.bool(forKey: enabledKey)
         }
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
