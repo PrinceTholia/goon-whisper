@@ -1,0 +1,17 @@
+.DS_Store
+.build/
+Whisper.app/
+*.dmg
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+~/.whisperapp/
+*.key
+samples/*.wav
+samples/*.mp3
+samples/*.m4a
+tools/quality-spike/samples/*.wav
+tools/quality-spike/.venv/
