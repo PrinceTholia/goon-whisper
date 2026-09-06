@@ -178,14 +178,19 @@ class CloudTranscriptionService {
             let code = err["code"] as? Int ?? 400
             return .failure(.fromHTTP(status: code, data: data, headers: nil))
         }
-        // Prefer candidates[].content.parts[].text
+        // gemini-3.5-transcribe returns parts[].audioTranscription.text (not parts[].text)
         if let candidates = json["candidates"] as? [[String: Any]] {
             var chunks: [String] = []
             for c in candidates {
                 guard let content = c["content"] as? [String: Any],
                       let parts = content["parts"] as? [[String: Any]] else { continue }
                 for part in parts {
-                    if let t = part["text"] as? String, !t.isEmpty { chunks.append(t) }
+                    if let t = part["text"] as? String, !t.isEmpty {
+                        chunks.append(t)
+                    } else if let at = part["audioTranscription"] as? [String: Any],
+                              let t = at["text"] as? String, !t.isEmpty {
+                        chunks.append(t)
+                    }
                 }
             }
             let text = chunks.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
