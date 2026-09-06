@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     private var toggleItem: NSMenuItem!
     private var cloudItem: NSMenuItem!
+    private var liveItem: NSMenuItem!
     private var correctionItem: NSMenuItem!
     private var backtrackItem: NSMenuItem!
     private var langMenu: NSMenu!
@@ -87,11 +88,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         cloudItem = NSMenuItem(title: "STT: Cloud", action: #selector(toggleCloud), keyEquivalent: "")
         cloudItem.target = self
+        liveItem = NSMenuItem(title: "Live STT (Gemini)", action: #selector(toggleLive), keyEquivalent: "")
+        liveItem.target = self
         correctionItem = NSMenuItem(title: "AI Correction", action: #selector(toggleCorrection), keyEquivalent: "")
         correctionItem.target = self
         backtrackItem = NSMenuItem(title: "Backtrack", action: #selector(toggleBacktrack), keyEquivalent: "")
         backtrackItem.target = self
         menu.addItem(cloudItem)
+        menu.addItem(liveItem)
         menu.addItem(correctionItem)
         menu.addItem(backtrackItem)
         menu.addItem(.separator())
@@ -162,8 +166,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         cloudItem.state = controller.useCloudSTT ? .on : .off
         cloudItem.title = "STT: Cloud (\(STTSettings.current.name))"
+        liveItem.state = controller.useLiveSTT ? .on : .off
+        liveItem.title = "Live STT (streaming)"
+        liveItem.isEnabled = controller.useCloudSTT
         correctionItem.state = controller.useCorrection ? .on : .off
-        correctionItem.title = "AI Correction (\(LLMSettings.current.name))"
+        correctionItem.title = "AI Correction (off = SMART only)"
         backtrackItem.state = controller.useBacktrack ? .on : .off
         backtrackItem.title = "Backtrack (self-corrections)"
         let hk = HotkeyManager.shared.currentConfig.displayString
@@ -176,6 +183,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     @objc private func toggleAction() { controller.toggle() }
     @objc private func toggleCloud() { controller.useCloudSTT.toggle(); updateStates() }
+    @objc private func toggleLive() { controller.useLiveSTT.toggle(); updateStates() }
     @objc private func toggleCorrection() { controller.useCorrection.toggle(); updateStates() }
     @objc private func toggleBacktrack() {
         controller.useBacktrack.toggle()

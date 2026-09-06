@@ -12,6 +12,11 @@ enum FocusMemory {
     }
 
     static var current: NSRunningApplication? { app }
+
+    /// Frontmost app name at capture time — light vocabulary bias (like Gemini screen context lite).
+    static var lastAppName: String? {
+        app?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 enum PasteOutcome: Equatable {

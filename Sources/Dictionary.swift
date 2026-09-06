@@ -141,6 +141,31 @@ final class CorrectionDictionary {
         lastMtime = Date()
     }
 
+    /// Desired spellings / terms to bias Gemini STT (`custom_vocabulary`).
+    /// Prefer the "to" side of each rule, plus distinctive "from" tokens. Cap ~100.
+    func vocabularyHints(limit: Int = 100) -> [String] {
+        let active = snapshot()
+        var out: [String] = []
+        var seen = Set<String>()
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.count >= 2 else { return }
+            let key = t.lowercased()
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            out.append(t)
+        }
+        for r in active {
+            add(r.to)
+            // Keep multi-word / proper-looking "from" only if different
+            if r.from.count >= 3, r.from.rangeOfCharacter(from: .letters) != nil {
+                add(r.from)
+            }
+            if out.count >= limit { break }
+        }
+        return out
+    }
+
     /// Deterministic replacement applied to the final text before paste.
     func apply(to text: String) -> String {
         let active = snapshot()

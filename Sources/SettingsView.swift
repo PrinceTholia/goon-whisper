@@ -125,7 +125,7 @@ struct SettingsView: View {
                     Label("Google Gemini API Key", systemImage: "key.fill")
                         .font(.subheadline).bold()
 
-                    Text("Used for both transcription (\(sttProvider.defaultModel)) and AI correction (\(llmProvider.defaultModel))")
+                    Text("Used for transcription (Live + SMART `gemini-3.5-transcribe`) · AI Correction is optional (menu) since SMART already cleans speech")
                         .font(.caption).foregroundColor(.secondary)
 
                     SecureField("AIza…", text: $geminiKey)

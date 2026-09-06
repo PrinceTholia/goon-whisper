@@ -62,8 +62,8 @@ class CloudTranscriptionService {
         var transcriptionConfig: [String: Any] = [
             "mode": "SMART"
         ]
+        // Auto language detection unless user picked a specific language.
         if let code = langCode(language, style: .gemini) {
-            // Prefer BCP-47 where we know it; otherwise the ISO 639-1 code.
             let locale: String
             switch code {
             case "en": locale = "en-US"
@@ -75,6 +75,14 @@ class CloudTranscriptionService {
             transcriptionConfig["languageCodes"] = [locale]
         } else {
             transcriptionConfig["languageCodes"] = [] as [String]
+        }
+
+        var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 80)
+        if let app = FocusMemory.lastAppName, !app.isEmpty {
+            vocab.insert(app, at: 0)
+        }
+        if !vocab.isEmpty {
+            transcriptionConfig["customVocabulary"] = Array(vocab.prefix(100))
         }
 
         let body: [String: Any] = [
