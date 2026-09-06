@@ -24,9 +24,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         KeyStore.prewarm()
-        // This fork defaults to Gemini for STT + correction (same API key).
-        STTSettings.providerID = "gemini"
-        LLMSettings.providerID = "gemini"
+        // Keep STT + LLM on the same provider family (gemini | groq).
+        Self.syncCloudProviders()
         setupStatusItem()
         setupPanel()
         setupHotkey()
@@ -164,13 +163,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         let bt = UserDefaults.standard.bool(forKey: "backtrackEnabled")
         if controller.useBacktrack != bt { controller.useBacktrack = bt }
 
+        // Settings may flip Live off when switching to Groq
+        let liveUD = UserDefaults.standard.object(forKey: "useLiveSTT") as? Bool ?? false
+        if controller.useLiveSTT != liveUD { controller.useLiveSTT = liveUD }
+
+        Self.syncCloudProviders()
+
         cloudItem.state = controller.useCloudSTT ? .on : .off
         cloudItem.title = "STT: Cloud (\(STTSettings.current.name))"
         liveItem.state = controller.useLiveSTT ? .on : .off
         liveItem.title = "Live STT (streaming)"
-        liveItem.isEnabled = controller.useCloudSTT
+        liveItem.isEnabled = controller.useCloudSTT && STTSettings.current.style == .gemini
         correctionItem.state = controller.useCorrection ? .on : .off
-        correctionItem.title = "AI Correction (off = SMART only)"
+        correctionItem.title = "AI Correction (\(LLMSettings.current.name))"
         backtrackItem.state = controller.useBacktrack ? .on : .off
         backtrackItem.title = "Backtrack (self-corrections)"
         let hk = HotkeyManager.shared.currentConfig.displayString
@@ -178,6 +183,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         for item in langMenu.items {
             let code = item.representedObject as? String
             item.state = (code == controller.language) ? .on : .off
+        }
+    }
+
+    /// Gemini↔Groq: STT and LLM always share the same family.
+    private static func syncCloudProviders() {
+        switch STTSettings.providerID {
+        case "groq":
+            LLMSettings.providerID = "groq"
+        case "gemini":
+            LLMSettings.providerID = "gemini"
+        default:
+            STTSettings.providerID = "gemini"
+            LLMSettings.providerID = "gemini"
         }
     }
 

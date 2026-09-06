@@ -13,7 +13,7 @@ enum DictationAPIError: Error, Equatable {
     var pillMessage: String {
         switch self {
         case .noAPIKey:
-            return "Add Gemini API key in Settings"
+            return "Add \(STTSettings.current.name) API key in Settings"
         case .invalidKey:
             return "Invalid API key — check Settings"
         case .network(let m):
@@ -37,18 +37,18 @@ enum DictationAPIError: Error, Equatable {
     var detailMessage: String {
         switch self {
         case .noAPIKey(let p):
-            return "No API key for \(p). Open Settings and paste your Gemini key."
+            return "No API key for \(p). Open Settings and paste your \(STTSettings.current.name) key."
         case .invalidKey:
-            return "API rejected the key. Create a new one at aistudio.google.com/apikey."
+            return "API rejected the key. Check Settings (Gemini: aistudio.google.com/apikey · Groq: console.groq.com)."
         case .network(let m):
             return "Network error: \(m)"
         case .rateLimited(let sec, let detail):
             let s = Int(ceil(sec))
-            return "API rate limit hit. Wait about \(s)s then try again. \(detail)"
+            return "\(STTSettings.current.name) rate limit hit. Wait ~\(s)s or switch provider in Settings. \(detail)"
         case .http(let status, let message, let retry):
             if status == 429 {
                 let s = Int(ceil(retry ?? 60))
-                return "Rate limited (HTTP 429). Wait ~\(s)s. \(message)"
+                return "Rate limited (HTTP 429). Wait ~\(s)s or switch provider in Settings. \(message)"
             }
             return "HTTP \(status): \(message)"
         case .emptyResponse:

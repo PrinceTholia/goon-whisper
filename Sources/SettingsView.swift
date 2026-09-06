@@ -1,21 +1,47 @@
 import SwiftUI
 
+private enum CloudProviderChoice: String, CaseIterable, Identifiable {
+    case gemini
+    case groq
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .gemini: return "Google Gemini"
+        case .groq: return "Groq"
+        }
+    }
+
+    var sttID: String { rawValue }
+    var llmID: String { rawValue }
+}
+
 struct SettingsView: View {
     // Hotkey
     @State private var hotkeyConfig = HotkeyManager.shared.currentConfig
     @State private var isRecordingHotkey = false
 
-    // Gemini — single key for STT + AI correction
+    // Provider + keys (STT + correction share one key per provider)
+    @State private var provider: CloudProviderChoice = .gemini
     @State private var geminiKey = ""
-    @State private var geminiMsg = ""
+    @State private var groqKey = ""
+    @State private var keyMsg = ""
 
     // Features
     @State private var backtrackOn = false
     @State private var soundOn = true
     @State private var autoDictOn = true
 
-    private var sttProvider: STTProvider { STTRegistry.provider(id: "gemini") }
-    private var llmProvider: LLMProvider { LLMRegistry.provider(id: "gemini") }
+    private var activeSTT: STTProvider { STTRegistry.provider(id: provider.sttID) }
+    private var activeLLM: LLMProvider { LLMRegistry.provider(id: provider.llmID) }
+
+    private var activeKeyBinding: Binding<String> {
+        switch provider {
+        case .gemini: return $geminiKey
+        case .groq: return $groqKey
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -73,8 +99,6 @@ struct SettingsView: View {
                         .font(.caption2).foregroundColor(.secondary)
                     Text("3. Privacy → Automation → Whisper → System Events ON (needed for auto-paste).")
                         .font(.caption2).foregroundColor(.secondary)
-                    Text("Whisper no longer skips paste when caret detection fails (that forced manual ⌘V in Cursor/Chrome).")
-                        .font(.caption2).foregroundColor(.secondary)
 
                     HStack(spacing: 8) {
                         Button("Fix Dictation conflict") {
@@ -120,24 +144,35 @@ struct SettingsView: View {
 
                 Divider()
 
-                // ── Gemini (STT + AI correction) ──
+                // ── Provider switch ──
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Google Gemini API Key", systemImage: "key.fill")
+                    Label("Cloud provider", systemImage: "cloud")
                         .font(.subheadline).bold()
 
-                    Text("Used for transcription (Live + SMART `gemini-3.5-transcribe`) · AI Correction is optional (menu) since SMART already cleans speech")
+                    Picker("Provider", selection: $provider) {
+                        ForEach(CloudProviderChoice.allCases) { p in
+                            Text(p.title).tag(p)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: provider) { _ in
+                        applyProviderSelection()
+                        keyMsg = ""
+                    }
+
+                    Text(providerBlurb)
                         .font(.caption).foregroundColor(.secondary)
 
-                    SecureField("AIza…", text: $geminiKey)
+                    SecureField(keyPlaceholder, text: activeKeyBinding)
                         .textFieldStyle(.roundedBorder)
 
                     HStack {
                         Button("Save") { saveKey() }.buttonStyle(.borderedProminent)
                         Button("Test") { testKey() }
-                        if !geminiMsg.isEmpty { Text(geminiMsg).font(.caption) }
+                        if !keyMsg.isEmpty { Text(keyMsg).font(.caption) }
                     }
 
-                    Text("Get a free key at aistudio.google.com/apikey · Or set GEMINI_API_KEY in ~/.zshrc")
+                    Text(keyHelp)
                         .font(.caption2).foregroundColor(.secondary)
                 }
 
@@ -148,57 +183,117 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 460, height: 520)
+        .frame(width: 480, height: 560)
         .onAppear {
-            loadKey()
+            loadProviderAndKeys()
             backtrackOn = UserDefaults.standard.bool(forKey: "backtrackEnabled")
             soundOn = FeedbackSound.isEnabled
             autoDictOn = DictionaryLearner.isEnabled
         }
     }
 
-    // MARK: Gemini key (shared by STT + LLM)
-    private func loadKey() {
-        geminiKey = STTSettings.savedKeyFile(for: sttProvider)
-        if geminiKey.isEmpty {
-            geminiKey = (try? String(contentsOfFile: KeyStore.dir + "/llm_gemini.key", encoding: .utf8))?
+    private var providerBlurb: String {
+        switch provider {
+        case .gemini:
+            return "STT: \(activeSTT.defaultModel) (SMART) · optional AI Correction: \(activeLLM.defaultModel). Live streaming is Gemini-only (menu)."
+        case .groq:
+            return "STT: \(activeSTT.defaultModel) · optional AI Correction: \(activeLLM.defaultModel). Usually higher free-tier limits than Gemini."
+        }
+    }
+
+    private var keyPlaceholder: String {
+        switch provider {
+        case .gemini: return "AIza…"
+        case .groq: return "gsk_…"
+        }
+    }
+
+    private var keyHelp: String {
+        switch provider {
+        case .gemini:
+            return "Get a free key at aistudio.google.com/apikey · Or set GEMINI_API_KEY in ~/.zshrc"
+        case .groq:
+            return "Get a free key at console.groq.com · Or set GROQ_API_KEY in ~/.zshrc"
+        }
+    }
+
+    // MARK: - Provider + keys
+
+    private func loadProviderAndKeys() {
+        let id = STTSettings.providerID
+        provider = (id == "groq") ? .groq : .gemini
+        // Keep STT/LLM in sync with picker
+        applyProviderSelection()
+
+        geminiKey = loadSavedKey(sttID: "gemini", llmID: "gemini")
+        groqKey = loadSavedKey(sttID: "groq", llmID: "groq")
+    }
+
+    private func loadSavedKey(sttID: String, llmID: String) -> String {
+        let stt = STTRegistry.provider(id: sttID)
+        var k = STTSettings.savedKeyFile(for: stt)
+        if k.isEmpty {
+            k = (try? String(contentsOfFile: KeyStore.dir + "/llm_\(llmID).key", encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        return k
+    }
+
+    private func applyProviderSelection() {
+        STTSettings.providerID = provider.sttID
+        LLMSettings.providerID = provider.llmID
+        // Live STT only makes sense for Gemini
+        if provider == .groq {
+            UserDefaults.standard.set(false, forKey: "useLiveSTT")
         }
     }
 
     private func applyKey() {
-        STTSettings.providerID = "gemini"
-        LLMSettings.providerID = "gemini"
-        let t = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        applyProviderSelection()
+        let t = activeKeyBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty {
-            STTSettings.saveKey(t, for: sttProvider)
-            LLMSettings.saveKey(t, for: llmProvider)
+            STTSettings.saveKey(t, for: activeSTT)
+            LLMSettings.saveKey(t, for: activeLLM)
         }
     }
 
     private func saveKey() {
         applyKey()
-        geminiMsg = "✅ Saved"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { geminiMsg = "" }
+        keyMsg = "✅ Saved \(provider.title)"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keyMsg = "" }
     }
 
     private func testKey() {
         applyKey()
-        guard let key = STTSettings.key(for: sttProvider) else {
-            geminiMsg = "⚠️ Enter API key first"; return
+        guard let key = STTSettings.key(for: activeSTT) else {
+            keyMsg = "⚠️ Enter API key first"; return
         }
+        keyMsg = "⏳ Testing…"
 
-        geminiMsg = "⏳ Testing…"
-        guard var comps = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models") else { return }
-        comps.queryItems = [URLQueryItem(name: "key", value: key)]
-        guard let url = comps.url else { return }
-        var req = URLRequest(url: url)
-        req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        URLSession.shared.dataTask(with: req) { _, resp, _ in
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            DispatchQueue.main.async {
-                geminiMsg = code == 200 ? "✅ Key is valid" : "❌ Invalid key (code \(code))"
-            }
-        }.resume()
+        switch provider {
+        case .gemini:
+            guard var comps = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models") else { return }
+            comps.queryItems = [URLQueryItem(name: "key", value: key)]
+            guard let url = comps.url else { return }
+            var req = URLRequest(url: url)
+            req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            URLSession.shared.dataTask(with: req) { _, resp, _ in
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                DispatchQueue.main.async {
+                    keyMsg = code == 200 ? "✅ Gemini key valid" : "❌ Invalid key (code \(code))"
+                }
+            }.resume()
+
+        case .groq:
+            guard let url = URL(string: "https://api.groq.com/openai/v1/models") else { return }
+            var req = URLRequest(url: url)
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            URLSession.shared.dataTask(with: req) { _, resp, _ in
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                DispatchQueue.main.async {
+                    keyMsg = code == 200 ? "✅ Groq key valid" : "❌ Invalid key (code \(code))"
+                }
+            }.resume()
+        }
     }
 }

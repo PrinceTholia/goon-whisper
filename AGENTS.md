@@ -26,8 +26,8 @@ macOS menu-bar dictation: hold Fn, record locally, Google Gemini STT (`gemini-3.
 
 ## Conventions that differ from defaults
 
-- Settings UI is Gemini-only even though `STTProvider.swift` / `LLMProvider.swift` still list other backends — do not revive multi-provider Settings without being asked.
-- Dictation is batch: WAV is local until stop, then one upload. Double-tap Fn is hands-free recording, not live STT.
+- Settings UI supports **Gemini | Groq** switch (same Fn/paste/Dictionary shell). Live STT is Gemini-only.
+- Dictation is batch by default: WAV is local until stop, then one upload (or Live race when enabled on Gemini). Double-tap Fn is hands-free recording, not live captions in the caret.
 
 ## Known pitfalls
 
