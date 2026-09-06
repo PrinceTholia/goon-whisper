@@ -298,8 +298,15 @@ class CloudTranscriptionService {
         var bits: [String] = []
         if p.id == "groq" || p.id == "openai" {
             bits.append("Clean dictation. Prefer exact words spoken; do not add filler like good, yeah, um.")
+            bits.append("Acronyms: STT, API, Groq, Gemini, Whisper.")
         }
         var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 50)
+        // Always bias common app terms even if dictionary is empty
+        for term in ["STT", "Groq", "Gemini", "Whisper", "API"] {
+            if !vocab.contains(where: { $0.caseInsensitiveCompare(term) == .orderedSame }) {
+                vocab.append(term)
+            }
+        }
         if let app = FocusMemory.lastAppName, !app.isEmpty {
             vocab.insert(app, at: 0)
         }
