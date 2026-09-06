@@ -162,19 +162,32 @@ struct FlowRecordingPill: View {
     }
 }
 
+/// Retina-crisp control: even point sizes + stroked ring (matches Wispr X / confirm).
 private struct FlowCircleButton: View {
     let systemName: String
     let action: () -> Void
 
+    private let diameter: CGFloat = 20
+
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(Color.white.opacity(0.9))
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.white.opacity(0.14)))
+            ZStack {
+                Circle()
+                    .fill(Color(white: 0.22).opacity(0.95))
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                Image(systemName: systemName)
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .imageScale(.medium)
+                    .foregroundStyle(Color.white.opacity(0.95))
+            }
+            .frame(width: diameter, height: diameter)
+            .compositingGroup()
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .help(systemName == "xmark" ? "Cancel" : "Stop and paste")
     }
 }
 
