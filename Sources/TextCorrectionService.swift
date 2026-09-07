@@ -38,6 +38,7 @@ class TextCorrectionService: ObservableObject {
         - Fix misheard/garbled words based on context (e.g. "sentence numbers" → "sentence only" when that fits)
         - Disambiguate sound-alikes using the WHOLE sentence (think vs thing vs theme; their vs there; etc.)
         - Remove spurious filler words the STT invented (random "good", "yeah", "um") if they break the meaning
+        - Delete fake credits / watermarks the STT invented (e.g. "Subtitles by the Amara.org community", "thanks for watching")
         - Add punctuation and spacing to improve readability
         - Do NOT add new content, summarize, translate, or change word endings/speaker gender
         - Preserve acronyms and initialisms exactly (STD vs STT, API, etc.) unless the user's dictionary maps them or sentence meaning is unambiguous

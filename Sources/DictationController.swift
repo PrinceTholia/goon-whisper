@@ -373,10 +373,29 @@ class DictationController: ObservableObject {
         for p in patterns {
             result = result.replacingOccurrences(of: p, with: " ", options: .regularExpression)
         }
+        // Whisper often invents YouTube/Amara credit lines on silence or short clips
+        result = Self.stripWhisperHallucinations(result)
         result = result
             .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "\\s+([,.!?])", with: "$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        return result
+    }
+
+    /// Known Whisper training-data watermarks (not real speech).
+    private static func stripWhisperHallucinations(_ text: String) -> String {
+        let watermarks = [
+            #"(?i)\bsubtitles?\s+by\s+the\s+amara\.org\s+community\b"#,
+            #"(?i)\bsubtitles?\s+by\s+amara\.org\b"#,
+            #"(?i)\btranscribed\s+by\s+https?://\S+"#,
+            #"(?i)\bthank(s| you)\s+for\s+watching\.?\b"#,
+            #"(?i)\bplease\s+subscribe\s+(to\s+)?(my|the)\s+channel\.?\b"#,
+            #"(?i)\bmbc\s+news\b"#,  // occasional Korean news hallucination
+        ]
+        var result = text
+        for p in watermarks {
+            result = result.replacingOccurrences(of: p, with: " ", options: .regularExpression)
+        }
         return result
     }
 }

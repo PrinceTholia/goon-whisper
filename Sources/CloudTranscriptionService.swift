@@ -299,6 +299,7 @@ class CloudTranscriptionService {
         var bits: [String] = []
         if p.id == "groq" || p.id == "openai" {
             bits.append("Clean dictation. Prefer exact words spoken; do not add filler like good, yeah, um.")
+            bits.append("Never invent credits, subtitles, channel plugs, or 'Subtitles by the Amara.org community'.")
             bits.append("Keep acronyms exactly as spoken; do not substitute similar letter sequences.")
             bits.append("Product names: Groq, Gemini, Whisper.")
         }
