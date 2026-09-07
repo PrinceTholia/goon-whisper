@@ -20,6 +20,8 @@ class DictationController: ObservableObject {
     @Published var isRecording = false
     /// True while double-tap Fn hands-free session is active (shows X / stop on pill).
     @Published var handsFreeUI = false
+    /// After hands-free Enter: paste then synthesize Return to send.
+    private var sendEnterAfterPaste = false
     @Published var status = ""
     @Published var stage: Stage = .idle
     @Published var useCloudSTT = true
@@ -150,8 +152,11 @@ class DictationController: ObservableObject {
         FeedbackSound.playStop()
     }
 
-    func stop() {
+    func stop(sendEnterAfterPaste: Bool = false) {
         guard recorder.isRecording else { return }
+        // Caret / app at end of recording — paste lands here even if focus moves during STT wait
+        FocusMemory.capture()
+        self.sendEnterAfterPaste = sendEnterAfterPaste
         FeedbackSound.playStop()
         isRecording = false
         status = "⏳ Processing…"
@@ -288,6 +293,8 @@ class DictationController: ObservableObject {
         DispatchQueue.main.async {
             let final = CorrectionDictionary.shared.apply(to: text)
             self.processing = false
+            let wantEnter = self.sendEnterAfterPaste
+            self.sendEnterAfterPaste = false
 
             let outcome = Paster.paste(final)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -296,10 +303,15 @@ class DictationController: ObservableObject {
 
             switch outcome {
             case .inserted:
-                // Paste immediately — no transcript preview pill (Wispr-style vanish)
-                self.status = "✅ Pasted"
+                self.status = wantEnter ? "✅ Pasted + Enter" : "✅ Pasted"
                 self.stage = .done("")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                if wantEnter {
+                    // Wait for async ⌘V paths (browser ~0.22s, native ~0.12s)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                        Paster.simulateReturn()
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + (wantEnter ? 0.7 : 0.12)) { [weak self] in
                     if case .done = self?.stage { self?.stage = .idle }
                 }
             case .copiedOnly:
@@ -314,6 +326,7 @@ class DictationController: ObservableObject {
 
     private func failOnMain(_ err: DictationAPIError) {
         DispatchQueue.main.async {
+            self.sendEnterAfterPaste = false
             self.processing = false
             self.showAPIError(err)
         }

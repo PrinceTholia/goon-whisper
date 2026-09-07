@@ -443,7 +443,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         mgr.onKeyUp = { [weak self] in
             DispatchQueue.main.async {
-                self?.controller.stop()
+                self?.controller.stop(sendEnterAfterPaste: false)
+            }
+        }
+
+        mgr.onHandsFreeEnter = { [weak self] in
+            DispatchQueue.main.async {
+                // HF already cleared by HotkeyManager; stop + paste + Return
+                self?.controller.stop(sendEnterAfterPaste: true)
             }
         }
 
@@ -455,10 +462,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.controller.handsFreeUI = active
-                // Hands-free needs clicks on ✕ / stop; hold-to-talk stays click-through
                 self.panel.ignoresMouseEvents = !active
                 if active {
-                    self.controller.status = "Hands-free — ✕ cancel · ■ stop (or tap Fn)"
+                    self.controller.status = "Hands-free — Enter sends · ✕ cancel · ■ stop"
                     self.showPanel()
                 } else if self.controller.status.hasPrefix("Hands-free") {
                     self.controller.status = ""

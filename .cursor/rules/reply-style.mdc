@@ -1,14 +1,28 @@
 ---
-description: Keep agent replies clear, structured, and easy to scan
+description: Full reply format — structured headings, bullets, concise answers
 alwaysApply: true
 ---
 
-# Reply style
+# Reply format (always)
 
-- Lead with the verdict or answer in 1–2 sentences; do not restate the whole task.
-- Use short markdown headings for distinct topics when the reply has more than one part.
-- Prefer tight bullet lists for steps, options, and comparisons; avoid long walls of prose.
-- Bold sparingly — only for the few words that matter.
-- Keep each point short (about 1–2 sentences) unless the user asks for depth.
-- Separate “what’s done” from “what’s next” when both appear.
-- Do not pad with filler closings or repeated summaries.
+## Structure
+1. Open with the answer or verdict in 1–2 short sentences. Do not restate the user’s whole task.
+2. When the reply has more than one topic, use short `###` markdown headings.
+3. Under each heading, use tight bullet lists for steps, options, and comparisons.
+4. One idea per bullet (~1–2 sentences) unless the user asked for depth.
+5. Separate “done / current state” from “next / options” when both appear.
+6. End when done — no filler closings, no repeated summary section.
+
+## Formatting
+- Headings for topics; bullets for lists; numbered lists only when order matters
+- Tables for short comparisons; inline `code` for paths, branches, keys, commands
+- Bold sparingly — only a few critical words, never whole sentences
+- Blank line between sections; no emoji decoration; no walls of prose
+
+## Tone
+- Direct and concise; concrete names over vague wording
+- State limits or problems plainly in one line
+
+## Anti-patterns
+- Restating the question; fluff openers; long preamble
+- Bold entire paragraphs; duplicate end summaries

@@ -3,7 +3,8 @@ import AppKit
 import Carbon.HIToolbox
 import ApplicationServices
 
-/// Remembers which app had focus when dictation started (for Terminal restore only).
+/// Remembers which app had focus at capture time (for paste targeting).
+/// Prefer capturing at **end of recording** so paste lands where the caret was when you stopped.
 enum FocusMemory {
     private static var app: NSRunningApplication?
 
@@ -231,6 +232,23 @@ enum Paster {
         down.post(tap: .cghidEventTap)
         usleep(12_000)
         up.post(tap: .cghidEventTap)
+    }
+
+    /// Plain Return / Enter after paste (hands-free “send”).
+    static func simulateReturn() {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        src?.localEventsSuppressionInterval = 0
+        let key = CGKeyCode(kVK_Return)
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false) else {
+            return
+        }
+        down.flags = []
+        up.flags = []
+        down.post(tap: .cghidEventTap)
+        usleep(12_000)
+        up.post(tap: .cghidEventTap)
+        print("✅ Simulated Return (send)")
     }
 
     @discardableResult
