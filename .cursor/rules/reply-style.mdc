@@ -1,0 +1,14 @@
+---
+description: Keep agent replies clear, structured, and easy to scan
+alwaysApply: true
+---
+
+# Reply style
+
+- Lead with the verdict or answer in 1–2 sentences; do not restate the whole task.
+- Use short markdown headings for distinct topics when the reply has more than one part.
+- Prefer tight bullet lists for steps, options, and comparisons; avoid long walls of prose.
+- Bold sparingly — only for the few words that matter.
+- Keep each point short (about 1–2 sentences) unless the user asks for depth.
+- Separate “what’s done” from “what’s next” when both appear.
+- Do not pad with filler closings or repeated summaries.
