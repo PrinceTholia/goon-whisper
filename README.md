@@ -139,7 +139,10 @@ Keys are stored locally under `~/.whisperapp/` (not in the repo).
 
 ### 5. Use it
 
-See **Features** above. Short version: hold Fn to talk, tap Fn for hands-free, Esc to cancel, Enter to send.
+- **Hold Fn**, speak, release → text pastes.
+- **Tap Fn**, speak as long as you want → **Enter** to paste & send, **Fn** or **■** to paste only, **Esc** or **✕** to cancel.
+
+Full detail: **Features** above.
 
 ---
 
