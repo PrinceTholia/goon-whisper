@@ -22,10 +22,10 @@ struct FloatingStatusView: View {
     var body: some View {
         ZStack {
             content
-                .transition(.opacity.combined(with: .scale(scale: 0.94)))
         }
         .frame(width: FlowPillMetrics.panelWidth, height: FlowPillMetrics.panelHeight)
-        .animation(.easeInOut(duration: 0.16), value: stageKey)
+        // No opacity transition — it raced with panel hide/show and left a blank HUD
+        .animation(.easeInOut(duration: 0.12), value: stageKey)
     }
 
     private var stageKey: String {

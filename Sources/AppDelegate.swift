@@ -8,6 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     private var statusItem: NSStatusItem!
     private var panel: NSPanel!
+    private var panelHosting: NSHostingView<FloatingStatusView>!
+    private var hidePanelWork: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
 
     private var settingsWindow: NSWindow?
@@ -44,7 +46,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 } else if stage == .idle {
                     self.toggleItem.title = "Start Speaking (\(hk))"
                 }
-                if stage == .idle { self.hidePanel() } else { self.showPanel() }
+                if stage == .idle {
+                    self.hidePanel()
+                } else {
+                    self.showPanel()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Backup: beeps fire on isRecording; never rely only on stage for HUD visibility
+        controller.$isRecording
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] recording in
+                if recording { self?.showPanel() }
             }
             .store(in: &cancellables)
 
@@ -370,19 +384,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
 
     private func setupPanel() {
-        let hosting = NSHostingView(rootView: FloatingStatusView(controller: controller))
+        panelHosting = NSHostingView(rootView: FloatingStatusView(controller: controller))
         let rect = NSRect(x: 0, y: 0, width: 168, height: 40)
         panel = NSPanel(contentRect: rect,
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
         panel.isFloatingPanel = true
         panel.level = .statusBar
+        panel.hidesOnDeactivate = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
+        panel.alphaValue = 0
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.contentView = hosting
+        panel.contentView = panelHosting
+        // Keep in the window list (alpha 0) so SwiftUI keeps updating — orderOut caused blank HUD races
+        panel.orderFrontRegardless()
     }
 
     /// Screen that currently contains the mouse — so the pill follows the active display.
@@ -394,27 +412,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
 
     private func showPanel() {
+        hidePanelWork?.cancel()
+        hidePanelWork = nil
+
         let screen = screenUnderCursor()
         let f = screen.visibleFrame
         let wide = controller.handsFreeUI || HotkeyManager.shared.handsFreeActive
         let size = NSSize(width: wide ? 168 : 140, height: 40)
         panel.setContentSize(size)
-        // Bottom-center of the display under the cursor (Wispr-style)
         panel.setFrameOrigin(NSPoint(
             x: f.midX - size.width / 2,
             y: f.minY + 40
         ))
         panel.ignoresMouseEvents = !wide
+        // Re-bind root view so the pill never sticks on a blank idle frame after hide
+        panelHosting.rootView = FloatingStatusView(controller: controller)
+        panelHosting.needsLayout = true
+        panelHosting.needsDisplay = true
+        panel.alphaValue = 1
         panel.orderFrontRegardless()
     }
 
     private func hidePanel() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        hidePanelWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
             if !self.controller.isRecording,
                self.controller.stage == .idle {
-                self.panel.orderOut(nil)
+                self.panel.alphaValue = 0
+                self.panel.ignoresMouseEvents = true
             }
         }
+        hidePanelWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
     // MARK: - Global hotkey
