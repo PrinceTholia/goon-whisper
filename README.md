@@ -67,7 +67,7 @@ Keys are stored locally under `~/.whisperapp/` (not in the repo).
 | Action | Result |
 |--------|--------|
 | **Hold Fn** | Record → release → transcribe → paste |
-| **Double-tap Fn** | Hands-free recording; **✕** cancels, **■** stops & pastes (or tap Fn again) |
+| **Tap Fn** | Hands-free continuous; **Esc** / **✕** cancel, **■** / **Enter** / tap Fn again to send |
 
 Dictionary (menu → Dictionary…): hard fixes `wrong -> right`, or sound-alikes  
 `~ think | thing | theme` (AI picks by context when Correction is on).

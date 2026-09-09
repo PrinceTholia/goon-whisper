@@ -54,8 +54,10 @@ struct HotkeyConfig: Codable, Equatable {
 
 /// Global hotkey manager.
 /// For Fn (modifier-only + hold):
-///   • Hold Fn  → push-to-talk (release to stop)
-///   • Double-tap Fn → hands-free until Fn tapped again
+///   • Fn down → always start recording
+///   • Quick tap (release before holdThreshold) → continuous hands-free
+///   • Hold past threshold → push-to-talk (release stops + paste)
+///   • During hands-free: tap Fn / Enter sends; Esc or ✕ cancels
 class HotkeyManager {
     static let shared = HotkeyManager()
 
@@ -64,27 +66,31 @@ class HotkeyManager {
     private var config: HotkeyConfig
     private var isHolding = false
     private var modifierKeyDown = false
+    private var modifierDownAt: TimeInterval = 0
+    /// Release shorter than this → continuous mode; longer → PTT stop on release.
+    private let holdThreshold: TimeInterval = 0.28
     private var lastModifierPress: TimeInterval = 0
-    private let doubleTapInterval: TimeInterval = 0.4
 
-    /// Hands-free (double-tap) session — ignore key-up until next tap.
+    /// Hands-free (single-tap) continuous session.
     private(set) var handsFreeActive = false
     private var pendingHoldStop: DispatchWorkItem?
 
-    /// Enter/Return during hands-free → stop + paste + send Enter (set by AppDelegate).
+    /// Enter/Return during hands-free → stop + paste + send Enter.
     var onHandsFreeEnter: (() -> Void)?
+    /// Escape during hands-free → cancel (no paste).
+    var onHandsFreeCancel: (() -> Void)?
 
     private var enterEventTap: CFMachPort?
     private var enterRunLoopSource: CFRunLoopSource?
 
-    /// Clear hands-free without simulating a Fn tap (used by pill ✕ / stop).
+    /// Clear hands-free without simulating a Fn tap (used by pill ✕ / stop / Esc).
     func endHandsFreeSession() {
         guard handsFreeActive else { return }
         handsFreeActive = false
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         lastModifierPress = 0
-        setEnterTapEnabled(false)
+        setHandsFreeKeyTapEnabled(false)
         onHandsFreeChanged?(false)
     }
 
@@ -123,16 +129,16 @@ class HotkeyManager {
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         handsFreeActive = false
-        setEnterTapEnabled(false)
+        setHandsFreeKeyTapEnabled(false)
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
-        tearDownEnterTap()
+        tearDownHandsFreeKeyTap()
     }
 
     private func restartMonitors() {
-        // Preserve callbacks; stop() clears hands-free — use careful restart
         let wasHF = handsFreeActive
         let enterCB = onHandsFreeEnter
+        let cancelCB = onHandsFreeCancel
         let down = onKeyDown
         let up = onKeyUp
         let active = isActive
@@ -140,9 +146,10 @@ class HotkeyManager {
 
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
-        tearDownEnterTap()
+        tearDownHandsFreeKeyTap()
 
         onHandsFreeEnter = enterCB
+        onHandsFreeCancel = cancelCB
         onKeyDown = down
         onKeyUp = up
         isActive = active
@@ -154,16 +161,21 @@ class HotkeyManager {
             self?.handleEvent(event)
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: eventTypes) { [weak self] event in
-            // Swallow Return in-process when hands-free (CG tap covers other apps)
-            if let self, self.shouldSwallowHandsFreeEnter(event) {
-                self.fireHandsFreeEnter()
-                return nil
+            if let self {
+                if self.shouldSwallowHandsFreeEnter(event) {
+                    self.fireHandsFreeEnter()
+                    return nil
+                }
+                if self.shouldSwallowHandsFreeEscape(event) {
+                    self.fireHandsFreeCancel()
+                    return nil
+                }
             }
             self?.handleEvent(event)
             return event
         }
-        ensureEnterTap()
-        setEnterTapEnabled(wasHF)
+        ensureHandsFreeKeyTap()
+        setHandsFreeKeyTapEnabled(wasHF)
     }
 
     private func handleEvent(_ event: NSEvent) {
@@ -197,7 +209,7 @@ class HotkeyManager {
         }
     }
 
-    /// Fn hybrid: hold = PTT, double-tap = hands-free toggle.
+    /// Fn: down always records; quick release → hands-free; long hold → PTT stop on release.
     private func handleModifierEvent(_ event: NSEvent) {
         guard event.type == .flagsChanged else { return }
         let configFlags = NSEvent.ModifierFlags(rawValue: config.modifiers)
@@ -213,53 +225,26 @@ class HotkeyManager {
     }
 
     private func handleModifierPressed() {
-        // Hands-free active → single tap stops
+        // Hands-free active → tap Fn stops (paste, no auto-Enter)
         if handsFreeActive {
             handsFreeActive = false
             pendingHoldStop?.cancel()
             lastModifierPress = 0
-            setEnterTapEnabled(false)
+            setHandsFreeKeyTapEnabled(false)
             onHandsFreeChanged?(false)
             onKeyUp?()
             return
         }
 
-        // Pure toggle mode (settings): keep old double-tap-to-start / tap-to-stop
+        // Pure toggle mode (settings): each Fn press toggles recording
         if !config.isHoldMode {
-            if isActive?() == true {
-                lastModifierPress = 0
-                onKeyDown?()
-            } else {
-                let now = ProcessInfo.processInfo.systemUptime
-                if now - lastModifierPress < doubleTapInterval {
-                    lastModifierPress = 0
-                    onKeyDown?()
-                } else {
-                    lastModifierPress = now
-                }
-            }
-            return
-        }
-
-        // Hold mode + hybrid double-tap
-        let now = ProcessInfo.processInfo.systemUptime
-        if now - lastModifierPress < doubleTapInterval {
-            // Second tap → cancel pending hold-stop, enter hands-free
-            pendingHoldStop?.cancel()
-            pendingHoldStop = nil
             lastModifierPress = 0
-            handsFreeActive = true
-            onHandsFreeChanged?(true)
-            setEnterTapEnabled(true)
-            // Recording should already be running from first tap; if not, start
-            if isActive?() != true {
-                onKeyDown?()
-            }
+            onKeyDown?()
             return
         }
 
-        lastModifierPress = now
-        // First tap / hold start
+        // Hold mode: Fn down → always start recording immediately
+        modifierDownAt = ProcessInfo.processInfo.systemUptime
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         if isActive?() != true {
@@ -269,31 +254,38 @@ class HotkeyManager {
 
     private func handleModifierReleased() {
         guard config.isHoldMode else { return }
-        guard !handsFreeActive else { return } // ignore release during hands-free
+        guard !handsFreeActive else { return }
 
-        // Delay stop so a quick second tap can cancel and go hands-free
-        pendingHoldStop?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self = self, !self.handsFreeActive else { return }
-            self.onKeyUp?()
+        let held = ProcessInfo.processInfo.systemUptime - modifierDownAt
+        if held < holdThreshold {
+            // Quick tap → keep recording as continuous hands-free
+            handsFreeActive = true
+            onHandsFreeChanged?(true)
+            setHandsFreeKeyTapEnabled(true)
+            print("🎙️ Single-tap Fn → hands-free continuous")
+        } else {
+            // Held long enough → classic PTT stop on release
+            onKeyUp?()
         }
-        pendingHoldStop = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + doubleTapInterval, execute: work)
     }
 
-    // MARK: - Hands-free Enter (Return / keypad Enter)
+    // MARK: - Hands-free Enter / Escape
 
     private func shouldSwallowHandsFreeEnter(_ event: NSEvent) -> Bool {
         guard handsFreeActive, event.type == .keyDown else { return false }
         let code = UInt32(event.keyCode)
         guard code == UInt32(kVK_Return) || code == UInt32(kVK_ANSI_KeypadEnter) else { return false }
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        // Plain Enter only — Shift+Enter stays newline in chat apps
         if mods.contains(.shift) || mods.contains(.command)
             || mods.contains(.option) || mods.contains(.control) {
             return false
         }
         return true
+    }
+
+    private func shouldSwallowHandsFreeEscape(_ event: NSEvent) -> Bool {
+        guard handsFreeActive, event.type == .keyDown else { return false }
+        return UInt32(event.keyCode) == UInt32(kVK_Escape)
     }
 
     private func fireHandsFreeEnter() {
@@ -303,13 +295,26 @@ class HotkeyManager {
             self.pendingHoldStop?.cancel()
             self.pendingHoldStop = nil
             self.lastModifierPress = 0
-            self.setEnterTapEnabled(false)
+            self.setHandsFreeKeyTapEnabled(false)
             self.onHandsFreeChanged?(false)
             self.onHandsFreeEnter?()
         }
     }
 
-    private func ensureEnterTap() {
+    private func fireHandsFreeCancel() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.handsFreeActive else { return }
+            self.handsFreeActive = false
+            self.pendingHoldStop?.cancel()
+            self.pendingHoldStop = nil
+            self.lastModifierPress = 0
+            self.setHandsFreeKeyTapEnabled(false)
+            self.onHandsFreeChanged?(false)
+            self.onHandsFreeCancel?()
+        }
+    }
+
+    private func ensureHandsFreeKeyTap() {
         if enterEventTap != nil { return }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
@@ -330,6 +335,10 @@ class HotkeyManager {
                     return Unmanaged.passUnretained(event)
                 }
                 let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+                if keyCode == Int64(kVK_Escape) {
+                    mgr.fireHandsFreeCancel()
+                    return nil
+                }
                 guard keyCode == Int64(kVK_Return) || keyCode == Int64(kVK_ANSI_KeypadEnter) else {
                     return Unmanaged.passUnretained(event)
                 }
@@ -338,7 +347,6 @@ class HotkeyManager {
                     || flags.contains(.maskAlternate) || flags.contains(.maskControl) {
                     return Unmanaged.passUnretained(event)
                 }
-                // Swallow Enter so chat doesn't send an empty message first
                 mgr.fireHandsFreeEnter()
                 return nil
             },
@@ -346,7 +354,7 @@ class HotkeyManager {
         )
 
         guard let tap else {
-            print("⚠️ Hands-free Enter tap unavailable (Accessibility?) — Enter-to-send disabled")
+            print("⚠️ Hands-free key tap unavailable (Accessibility?) — Enter/Esc hooks limited")
             return
         }
         enterEventTap = tap
@@ -357,14 +365,14 @@ class HotkeyManager {
         CGEvent.tapEnable(tap: tap, enable: false)
     }
 
-    private func setEnterTapEnabled(_ on: Bool) {
-        ensureEnterTap()
+    private func setHandsFreeKeyTapEnabled(_ on: Bool) {
+        ensureHandsFreeKeyTap()
         if let tap = enterEventTap {
             CGEvent.tapEnable(tap: tap, enable: on)
         }
     }
 
-    private func tearDownEnterTap() {
+    private func tearDownHandsFreeKeyTap() {
         if let tap = enterEventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }

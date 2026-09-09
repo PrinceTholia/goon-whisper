@@ -425,10 +425,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         mgr.onKeyDown = { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // Hybrid hold / hands-free both use start; toggle() for pure toggle mode
+                // Hold / single-tap hands-free both start; toggle() for pure toggle mode
                 if HotkeyManager.shared.currentConfig.isHoldMode {
                     if HotkeyManager.shared.handsFreeActive {
-                        // Already recording in hands-free from first tap of double-tap
                         if !self.controller.isRecording {
                             self.controller.start()
                         }
@@ -454,6 +453,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             }
         }
 
+        mgr.onHandsFreeCancel = { [weak self] in
+            DispatchQueue.main.async {
+                self?.controller.cancelRecording()
+            }
+        }
+
         mgr.isActive = { [weak self] in
             self?.controller.isRecording ?? false
         }
@@ -464,7 +469,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 self.controller.handsFreeUI = active
                 self.panel.ignoresMouseEvents = !active
                 if active {
-                    self.controller.status = "Hands-free — Enter sends · ✕ cancel · ■ stop"
+                    self.controller.status = "Hands-free — Enter sends · Esc/✕ cancel · ■ or Fn stop"
                     self.showPanel()
                 } else if self.controller.status.hasPrefix("Hands-free") {
                     self.controller.status = ""

@@ -15,7 +15,7 @@ private enum FlowPillMetrics {
 }
 
 /// Wispr Flow–style floating pill.
-/// Hold Fn: continuous waveform. Double-tap Fn: ✕ | wave | stop.
+/// Hold Fn: continuous waveform. Tap Fn hands-free: ✕ | wave | stop (Esc cancels).
 struct FloatingStatusView: View {
     @ObservedObject var controller: DictationController
 

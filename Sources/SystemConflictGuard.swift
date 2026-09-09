@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-/// Prevents macOS built-in Dictation from stealing Fn double-tap.
+/// Prevents macOS built-in Dictation from stealing Fn taps.
 ///
 /// When `AppleFnUsageType = 3` / Dictation shortcut = “Press Fn twice”, the system
 /// shows live dictation text, pauses music, then clears the caret text when stopped —

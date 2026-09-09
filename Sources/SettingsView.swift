@@ -68,7 +68,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("Hold Fn to talk · Double-tap Fn for hands-free (tap Fn again to stop)")
+                    Text("Hold Fn to talk · Tap Fn for hands-free (Esc cancels · Enter sends)")
                         .font(.caption2).foregroundColor(.secondary)
 
                     Text("Whisper turns off macOS “Press Fn twice for Dictation” so it doesn’t steal live text or pause music. If it comes back: System Settings → Keyboard → Dictation → Shortcut → Off.")
@@ -80,7 +80,7 @@ struct SettingsView: View {
                             HotkeyManager.shared.updateConfig(hotkeyConfig)
                         }
 
-                    Text("When hold is on: hold = push-to-talk, double-tap = hands-free. When off: double-tap starts, tap stops.")
+                    Text("When hold is on: hold = push-to-talk, quick tap = hands-free. When off: tap Fn toggles recording.")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .onChange(of: hotkeyConfig.keyCode) { _ in HotkeyManager.shared.updateConfig(hotkeyConfig) }

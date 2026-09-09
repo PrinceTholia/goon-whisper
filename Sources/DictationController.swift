@@ -18,7 +18,7 @@ enum Stage: Equatable {
 /// Orchestrates everything: record → transcribe (cloud/local) → correct (LLM) → paste into focused app
 class DictationController: ObservableObject {
     @Published var isRecording = false
-    /// True while double-tap Fn hands-free session is active (shows X / stop on pill).
+    /// True while tap-Fn hands-free session is active (shows X / stop on pill; Esc cancels).
     @Published var handsFreeUI = false
     /// After hands-free Enter: paste then synthesize Return to send.
     private var sendEnterAfterPaste = false
@@ -133,11 +133,12 @@ class DictationController: ObservableObject {
     }
 
 
-    /// Abort recording without pasting (hands-free ✕).
+    /// Abort recording without pasting (hands-free ✕ / Esc).
     func cancelRecording() {
         guard recorder.isRecording || stage == .recording else {
             stage = .idle
             isRecording = false
+            handsFreeUI = false
             return
         }
         liveSTT?.cancel()
@@ -147,6 +148,8 @@ class DictationController: ObservableObject {
         recorder.stopRecording(publishFile: false)
         isRecording = false
         processing = false
+        handsFreeUI = false
+        sendEnterAfterPaste = false
         status = "Cancelled"
         stage = .idle
         FeedbackSound.playStop()
