@@ -40,8 +40,8 @@ Whisper turns your speech into text and pastes it where your cursor is. That’s
 
 #### How Whisper tells hold vs tap apart
 
-- You **held** Fn for a moment → mode 1 (paste when you release).
-- You **tapped** Fn quickly → mode 2 (keeps recording until you stop or cancel).
+- Finger down briefly (under about half a second) → continuous (mode 2).
+- Finger stays down longer → hold-to-talk (mode 1: pastes when you release).
 
 #### Optional setting
 

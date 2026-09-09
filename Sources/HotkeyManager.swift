@@ -67,8 +67,10 @@ class HotkeyManager {
     private var isHolding = false
     private var modifierKeyDown = false
     private var modifierDownAt: TimeInterval = 0
-    /// Release shorter than this → continuous mode; longer → PTT stop on release.
-    private let holdThreshold: TimeInterval = 0.28
+    /// How long Fn may stay down and still count as a *tap* (hands-free).
+    /// Longer than this → push-to-talk (stop on release).
+    /// 0.28s was too tight — normal finger taps often exceeded it and became PTT by mistake.
+    private let holdThreshold: TimeInterval = 0.45
     private var lastModifierPress: TimeInterval = 0
 
     /// Hands-free (single-tap) continuous session.
