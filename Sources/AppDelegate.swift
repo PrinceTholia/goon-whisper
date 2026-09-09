@@ -471,16 +471,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
 
         mgr.onKeyUp = { [weak self] in
+            // Freeze focus before async stop (hold-release or hands-free Fn)
+            FocusMemory.capture()
             DispatchQueue.main.async {
-                self?.controller.stop(sendEnterAfterPaste: false)
+                self?.controller.stop(sendEnterAfterPaste: false, recaptureFocus: false)
             }
         }
 
         mgr.onHandsFreeEnter = { [weak self] in
-            DispatchQueue.main.async {
-                // HF already cleared by HotkeyManager; stop + paste + Return
-                self?.controller.stop(sendEnterAfterPaste: true)
-            }
+            // Focus already frozen when Enter was swallowed — do not recapture after async
+            self?.controller.stop(sendEnterAfterPaste: true, recaptureFocus: false)
         }
 
         mgr.onHandsFreeCancel = { [weak self] in

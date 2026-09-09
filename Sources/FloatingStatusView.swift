@@ -52,8 +52,9 @@ struct FloatingStatusView: View {
                     controller.cancelRecording()
                 },
                 onStop: {
+                    FocusMemory.capture()
                     HotkeyManager.shared.endHandsFreeSession()
-                    controller.stop()
+                    controller.stop(recaptureFocus: false)
                 }
             )
         case .transcribing, .correcting:

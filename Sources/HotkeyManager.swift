@@ -229,6 +229,8 @@ class HotkeyManager {
     private func handleModifierPressed() {
         // Hands-free active → tap Fn stops (paste, no auto-Enter)
         if handsFreeActive {
+            // Capture focus NOW (before any async hop) — same rule as Enter
+            FocusMemory.capture()
             handsFreeActive = false
             pendingHoldStop?.cancel()
             lastModifierPress = 0
@@ -291,6 +293,8 @@ class HotkeyManager {
     }
 
     private func fireHandsFreeEnter() {
+        // Remember caret app the instant Enter is pressed — before async / window switches
+        FocusMemory.capture()
         DispatchQueue.main.async { [weak self] in
             guard let self, self.handsFreeActive else { return }
             self.handsFreeActive = false

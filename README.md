@@ -40,8 +40,8 @@ Whisper turns your speech into text and pastes it where your cursor is. That’s
 
 #### How Whisper tells hold vs tap apart
 
-- Finger down briefly (under about half a second) → continuous (mode 2).
-- Finger stays down longer → hold-to-talk (mode 1: pastes when you release).
+- Finger down for less than **0.45 seconds** → continuous (mode 2).
+- Finger down for **0.45 seconds or longer** → hold-to-talk (mode 1: pastes when you release).
 
 #### Optional setting
 
@@ -66,7 +66,9 @@ In Settings, you can turn **Hold to talk** off. Then Fn only toggles recording o
 
 ### Paste behavior
 
-- Captures the focused app when recording **ends**, then pastes there (so switching windows mid-wait is OK).
+- Remembers the focused app the moment you **stop** (second **Fn**, **Enter**, or **■**).
+- After transcription, brings that app back and pastes there — even if you switched windows while waiting.
+- Same rule for **Enter**: paste + simulated Enter go to the app that was focused when you pressed Enter.
 - Uses one paste strategy at a time (avoids double-paste in browsers / Electron).
 - If Accessibility can’t paste: text stays on the clipboard for ⌘V.
 

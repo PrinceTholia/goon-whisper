@@ -155,10 +155,13 @@ class DictationController: ObservableObject {
         FeedbackSound.playStop()
     }
 
-    func stop(sendEnterAfterPaste: Bool = false) {
+    func stop(sendEnterAfterPaste: Bool = false, recaptureFocus: Bool = true) {
         guard recorder.isRecording else { return }
-        // Caret / app at end of recording — paste lands here even if focus moves during STT wait
-        FocusMemory.capture()
+        // Default: remember caret app at stop. Enter path passes recaptureFocus: false
+        // because HotkeyManager already captured the instant Enter was pressed.
+        if recaptureFocus {
+            FocusMemory.capture()
+        }
         self.sendEnterAfterPaste = sendEnterAfterPaste
         FeedbackSound.playStop()
         isRecording = false

@@ -4,19 +4,44 @@ import Carbon.HIToolbox
 import ApplicationServices
 
 /// Remembers which app had focus at capture time (for paste targeting).
-/// Prefer capturing at **end of recording** so paste lands where the caret was when you stopped.
+/// Capture at the moment the user **stops** (Fn / Enter / ■) — not later during STT —
+/// then activate that app again before paste so a mid-wait window switch doesn’t steal ⌘V.
 enum FocusMemory {
     private static var app: NSRunningApplication?
+    private static let lock = NSLock()
 
     static func capture() {
-        app = NSWorkspace.shared.frontmostApplication
+        let front = NSWorkspace.shared.frontmostApplication
+        lock.lock()
+        app = front
+        lock.unlock()
+        if let name = front?.localizedName {
+            print("📌 Focus captured: \(name)")
+        }
     }
 
-    static var current: NSRunningApplication? { app }
+    static var current: NSRunningApplication? {
+        lock.lock()
+        defer { lock.unlock() }
+        return app
+    }
 
     /// Frontmost app name at capture time — light vocabulary bias (like Gemini screen context lite).
     static var lastAppName: String? {
-        app?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        current?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Bring the remembered app forward so paste / Enter hit the caret from stop time.
+    @discardableResult
+    static func activateCaptured() -> NSRunningApplication? {
+        guard let target = current,
+              target.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return current
+        }
+        if !target.isActive {
+            target.activate(options: [.activateIgnoringOtherApps])
+        }
+        return target
     }
 }
 
@@ -81,7 +106,7 @@ enum Paster {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        let target = FocusMemory.current
+        let target = FocusMemory.activateCaptured()
         if target?.bundleIdentifier == Bundle.main.bundleIdentifier {
             return .copiedOnly
         }
@@ -92,7 +117,7 @@ enum Paster {
         }
 
         // WebViews / Electron: AX insert is unreliable (false success or no-op).
-        // Single delayed ⌘V only — never follow with System Events.
+        // Activate remembered app first, then single delayed ⌘V — never follow with System Events.
         if prefersCommandVOnly(target) {
             pasteCommandVOnly(delay: 0.22, generation: generation, label: target?.localizedName ?? "web")
             return .inserted
@@ -101,6 +126,7 @@ enum Paster {
         // Native apps: try AX once; if that fails, ⌘V once. Never both backups.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             guard Self.isCurrentPaste(generation) else { return }
+            FocusMemory.activateCaptured()
             if insertViaAccessibility(text) {
                 print("✅ Paste via AX insert")
                 return
@@ -122,8 +148,13 @@ enum Paster {
     private static func pasteCommandVOnly(delay: TimeInterval, generation: UInt64, label: String) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard isCurrentPaste(generation) else { return }
-            simulateCommandV()
-            print("✅ \(label) paste via ⌘V only")
+            FocusMemory.activateCaptured()
+            // Brief beat so the target app is frontmost before ⌘V
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard isCurrentPaste(generation) else { return }
+                simulateCommandV()
+                print("✅ \(label) paste via ⌘V only")
+            }
         }
     }
 
@@ -236,6 +267,7 @@ enum Paster {
 
     /// Plain Return / Enter after paste (hands-free “send”).
     static func simulateReturn() {
+        FocusMemory.activateCaptured()
         let src = CGEventSource(stateID: .combinedSessionState)
         src?.localEventsSuppressionInterval = 0
         let key = CGKeyCode(kVK_Return)
