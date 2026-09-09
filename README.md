@@ -14,21 +14,38 @@ Use this section when setting the app up for someone or explaining controls to a
 
 ### Recording controls
 
-| Action | What happens |
-|--------|----------------|
-| **Hold Fn** | Push-to-talk: record while held → release → transcribe → paste into the focused app |
-| **Quick tap Fn** | Hands-free continuous recording (stay talking; no need to hold) |
-| **Tap Fn again** (while hands-free) | Stop → transcribe → paste (does **not** press Enter) |
-| **Enter / Return** (while hands-free) | Stop → transcribe → paste → then simulate **Enter** (send in chat apps) |
-| **Esc** (while hands-free) | **Cancel** — discard audio, nothing transcribed, nothing pasted |
-| **✕** on the floating pill | Same as Esc — cancel with no paste |
-| **■** on the floating pill | Same as tap Fn again — stop, transcribe, paste (no Enter) |
+There are **two ways** to dictate. Both use the **Fn** key.
 
-Notes:
+#### 1. Hold Fn (short phrases)
 
-- Hold vs tap is decided by how long Fn is down (~0.28s). Short release → hands-free; longer hold → classic push-to-talk.
-- Plain Enter is captured only during hands-free. Shift / ⌘ / ⌥ / ⌃ + Enter still go to the focused app.
-- Settings can turn **Hold to talk** off: then each Fn press simply toggles recording on/off (no hands-free mode).
+1. Press and **keep holding** Fn.
+2. Speak.
+3. **Let go** of Fn when you’re done.
+
+Whisper turns your speech into text and pastes it where your cursor is. That’s it.
+
+#### 2. Tap Fn (longer / hands-free)
+
+1. **Tap** Fn once (press and release quickly — don’t hold).
+2. Keep talking as long as you want. A small black pill appears on screen.
+3. When you’re finished, pick **one** of these:
+
+| What you want | What to do |
+|---------------|------------|
+| Paste the text | Press **Fn** again, **or** click **■** on the pill |
+| Paste the text **and** press Enter (e.g. send a chat message) | Press **Enter** |
+| Throw it away — don’t paste anything | Press **Esc**, **or** click **✕** on the pill |
+
+**Esc / ✕** means cancel: the recording is deleted. Nothing is transcribed. Nothing is pasted.
+
+#### How Whisper tells hold vs tap apart
+
+- You **held** Fn for a moment → mode 1 (paste when you release).
+- You **tapped** Fn quickly → mode 2 (keeps recording until you stop or cancel).
+
+#### Optional setting
+
+In Settings, you can turn **Hold to talk** off. Then Fn only toggles recording on/off — no separate hands-free mode.
 
 ### Floating status pill (HUD)
 
