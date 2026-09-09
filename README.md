@@ -1,10 +1,68 @@
 # Goon Whisper
 
-macOS menu-bar dictation app — hold **Fn**, speak, text pastes into the focused app.
+macOS menu-bar dictation app — speak with **Fn**, cleaned text pastes into the focused app.
 
 Supports **Groq** (Whisper) and **Google Gemini**. Groq is the recommended free-tier path.
 
 **Requirements:** macOS 13+, [Xcode Command Line Tools](https://developer.apple.com/xcode/) (`xcode-select --install`).
+
+---
+
+## Features (how it works)
+
+Use this section when setting the app up for someone or explaining controls to an LLM.
+
+### Recording controls
+
+| Action | What happens |
+|--------|----------------|
+| **Hold Fn** | Push-to-talk: record while held → release → transcribe → paste into the focused app |
+| **Quick tap Fn** | Hands-free continuous recording (stay talking; no need to hold) |
+| **Tap Fn again** (while hands-free) | Stop → transcribe → paste (does **not** press Enter) |
+| **Enter / Return** (while hands-free) | Stop → transcribe → paste → then simulate **Enter** (send in chat apps) |
+| **Esc** (while hands-free) | **Cancel** — discard audio, nothing transcribed, nothing pasted |
+| **✕** on the floating pill | Same as Esc — cancel with no paste |
+| **■** on the floating pill | Same as tap Fn again — stop, transcribe, paste (no Enter) |
+
+Notes:
+
+- Hold vs tap is decided by how long Fn is down (~0.28s). Short release → hands-free; longer hold → classic push-to-talk.
+- Plain Enter is captured only during hands-free. Shift / ⌘ / ⌥ / ⌃ + Enter still go to the focused app.
+- Settings can turn **Hold to talk** off: then each Fn press simply toggles recording on/off (no hands-free mode).
+
+### Floating status pill (HUD)
+
+- Black pill near the **bottom center of the display under the cursor** (multi-monitor aware).
+- Hold mode: live waveform while recording.
+- Hands-free: wider pill with **✕** (cancel) \| waveform \| **■** (stop & paste).
+- After stop: shows **Cleaning up…** while transcribing / polishing, then vanishes when text is pasted.
+- If paste can’t reach a caret: clipboard copy + short **Copied — ⌘V** hint.
+
+### Speech → text
+
+- **Providers (Settings):** **Groq** (recommended) or **Google Gemini**.
+- Transcription uses that provider’s STT; optional **AI Correction** polishes fillers / self-corrections with the same provider’s LLM.
+- **Language** submenu: Auto-detect or a fixed language (en, th, zh, ja, ko, …).
+- **Backtrack** (optional): drops “sorry, I meant…” style restarts when Correction is on.
+- **Live STT** (optional, Gemini only): streams while talking; races against a normal WAV upload.
+- Strips common STT junk (subtitle watermarks, “thanks for watching”, bracketed sound tags, etc.) before paste.
+
+### Paste behavior
+
+- Captures the focused app when recording **ends**, then pastes there (so switching windows mid-wait is OK).
+- Uses one paste strategy at a time (avoids double-paste in browsers / Electron).
+- If Accessibility can’t paste: text stays on the clipboard for ⌘V.
+
+### Dictionary
+
+- Menu → **Dictionary…** (file: `~/.whisperapp/dictionary.txt`).
+- Hard fixes: `wrong -> right`
+- Sound-alikes (when Correction is on): `~ think | thing | theme` — AI picks by context.
+- Optional **Auto-add edits to Dictionary**: learns from quick post-paste edits.
+
+### Menu bar
+
+Mic icon → Start/Stop, Settings, Dictionary, STT / Correction / Live / Backtrack / Language toggles, Fix Accessibility, Test Auto-Paste, Restart, Quit.
 
 ---
 
@@ -43,7 +101,7 @@ Grant these for **Whisper** / `/Applications/Whisper.app`:
 | Permission | Why |
 |------------|-----|
 | **Microphone** | Record your voice |
-| **Accessibility** | Auto-paste into other apps |
+| **Accessibility** | Auto-paste into other apps; hands-free Enter / Esc |
 | **Automation → System Events** | Backup paste path (Terminal, etc.) |
 
 **Path:** System Settings → Privacy & Security → Microphone / Accessibility / Automation.
@@ -64,13 +122,7 @@ Keys are stored locally under `~/.whisperapp/` (not in the repo).
 
 ### 5. Use it
 
-| Action | Result |
-|--------|--------|
-| **Hold Fn** | Record → release → transcribe → paste |
-| **Tap Fn** | Hands-free continuous; **Esc** / **✕** cancel, **■** / **Enter** / tap Fn again to send |
-
-Dictionary (menu → Dictionary…): hard fixes `wrong -> right`, or sound-alikes  
-`~ think | thing | theme` (AI picks by context when Correction is on).
+See **Features** above. Short version: hold Fn to talk, tap Fn for hands-free, Esc to cancel, Enter to send.
 
 ---
 
@@ -109,6 +161,7 @@ Signing helper (one-time Keychain ACL so rebuilds don’t ask for password every
 | “No API key” | Settings → pick Groq or Gemini → paste key → Save |
 | Double paste in browser | Update to latest `main` (paste paths are exclusive) |
 | Accessibility resets every rebuild | Sign with **Goon Whisper Dev** via `./make_app.sh` (not ad-hoc `-`) |
+| Esc / Enter ignored in other apps while hands-free | Grant **Accessibility** to `/Applications/Whisper.app` |
 
 ---
 
