@@ -1,47 +1,21 @@
 import SwiftUI
 
-private enum CloudProviderChoice: String, CaseIterable, Identifiable {
-    case gemini
-    case groq
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .gemini: return "Google Gemini"
-        case .groq: return "Groq"
-        }
-    }
-
-    var sttID: String { rawValue }
-    var llmID: String { rawValue }
-}
-
 struct SettingsView: View {
     // Hotkey
     @State private var hotkeyConfig = HotkeyManager.shared.currentConfig
     @State private var isRecordingHotkey = false
 
-    // Provider + keys (STT + correction share one key per provider)
-    @State private var provider: CloudProviderChoice = .gemini
-    @State private var geminiKey = ""
     @State private var groqKey = ""
     @State private var keyMsg = ""
 
     // Features
+    @State private var correctionOn = false
     @State private var backtrackOn = false
     @State private var soundOn = true
     @State private var autoDictOn = true
 
-    private var activeSTT: STTProvider { STTRegistry.provider(id: provider.sttID) }
-    private var activeLLM: LLMProvider { LLMRegistry.provider(id: provider.llmID) }
-
-    private var activeKeyBinding: Binding<String> {
-        switch provider {
-        case .gemini: return $geminiKey
-        case .groq: return $groqKey
-        }
-    }
+    private var groqSTT: STTProvider { STTRegistry.provider(id: "groq") }
+    private var groqLLM: LLMProvider { LLMRegistry.provider(id: "groq") }
 
     var body: some View {
         ScrollView {
@@ -118,6 +92,15 @@ struct SettingsView: View {
                     Label("Dictation polish", systemImage: "wand.and.stars")
                         .font(.subheadline).bold()
 
+                    Toggle("AI Correction (Groq LLM polish after Whisper)", isOn: $correctionOn)
+                        .font(.caption)
+                        .onChange(of: correctionOn) { v in
+                            UserDefaults.standard.set(v, forKey: "useCorrection")
+                        }
+
+                    Text("Optional. When on, Groq Llama cleans fillers / mishears after Whisper. Off keeps the raw transcript.")
+                        .font(.caption2).foregroundColor(.secondary)
+
                     Toggle("Backtrack (drop “sorry / actually…” self-corrections)", isOn: $backtrackOn)
                         .font(.caption)
                         .onChange(of: backtrackOn) { v in
@@ -144,26 +127,15 @@ struct SettingsView: View {
 
                 Divider()
 
-                // ── Provider switch ──
+                // ── Groq key ──
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Cloud provider", systemImage: "cloud")
+                    Label("Groq API key", systemImage: "key")
                         .font(.subheadline).bold()
 
-                    Picker("Provider", selection: $provider) {
-                        ForEach(CloudProviderChoice.allCases) { p in
-                            Text(p.title).tag(p)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: provider) { _ in
-                        applyProviderSelection()
-                        keyMsg = ""
-                    }
-
-                    Text(providerBlurb)
+                    Text("STT: whisper-large-v3 · optional AI Correction: \(groqLLM.defaultModel). Paste your Groq key below.")
                         .font(.caption).foregroundColor(.secondary)
 
-                    SecureField(keyPlaceholder, text: activeKeyBinding)
+                    SecureField("gsk_…", text: $groqKey)
                         .textFieldStyle(.roundedBorder)
 
                     HStack {
@@ -172,7 +144,7 @@ struct SettingsView: View {
                         if !keyMsg.isEmpty { Text(keyMsg).font(.caption) }
                     }
 
-                    Text(keyHelp)
+                    Text("Get a free key at console.groq.com · Or set GROQ_API_KEY in ~/.zshrc")
                         .font(.caption2).foregroundColor(.secondary)
                 }
 
@@ -185,125 +157,67 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 560)
         .onAppear {
-            loadProviderAndKeys()
+            loadKey()
+            correctionOn = UserDefaults.standard.bool(forKey: "useCorrection")
             backtrackOn = UserDefaults.standard.bool(forKey: "backtrackEnabled")
             soundOn = FeedbackSound.isEnabled
             autoDictOn = DictionaryLearner.isEnabled
         }
     }
 
-    private var providerBlurb: String {
-        switch provider {
-        case .gemini:
-            return "STT: \(activeSTT.defaultModel) (SMART) · optional AI Correction: \(activeLLM.defaultModel). Live streaming is Gemini-only (menu)."
-        case .groq:
-            return "STT: whisper-large-v3 (more accurate than turbo) · AI Correction on by default to fix mishears. Paste your Groq key below."
-        }
+    // MARK: - Groq key
+
+    private func loadKey() {
+        STTSettings.providerID = "groq"
+        LLMSettings.providerID = "groq"
+        groqKey = loadSavedKey()
     }
 
-    private var keyPlaceholder: String {
-        switch provider {
-        case .gemini: return "AIza…"
-        case .groq: return "gsk_…"
-        }
-    }
-
-    private var keyHelp: String {
-        switch provider {
-        case .gemini:
-            return "Get a free key at aistudio.google.com/apikey · Or set GEMINI_API_KEY in ~/.zshrc"
-        case .groq:
-            return "Get a free key at console.groq.com · Or set GROQ_API_KEY in ~/.zshrc"
-        }
-    }
-
-    // MARK: - Provider + keys
-
-    private func loadProviderAndKeys() {
-        let id = STTSettings.providerID
-        provider = (id == "groq") ? .groq : .gemini
-        // Keep STT/LLM in sync with picker
-        applyProviderSelection()
-
-        geminiKey = loadSavedKey(sttID: "gemini", llmID: "gemini")
-        groqKey = loadSavedKey(sttID: "groq", llmID: "groq")
-    }
-
-    private func loadSavedKey(sttID: String, llmID: String) -> String {
-        let stt = STTRegistry.provider(id: sttID)
-        var k = STTSettings.savedKeyFile(for: stt)
+    private func loadSavedKey() -> String {
+        var k = STTSettings.savedKeyFile(for: groqSTT)
         if k.isEmpty {
-            k = (try? String(contentsOfFile: KeyStore.dir + "/llm_\(llmID).key", encoding: .utf8))?
+            k = (try? String(contentsOfFile: KeyStore.dir + "/llm_groq.key", encoding: .utf8))?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
         return k
     }
 
-    private func applyProviderSelection() {
-        STTSettings.providerID = provider.sttID
-        LLMSettings.providerID = provider.llmID
-        switch provider {
-        case .groq:
-            // Accuracy: full Whisper large-v3 + Llama cleanup (turbo hallucinates more)
-            let groqSTT = STTRegistry.provider(id: "groq")
-            let saved = STTSettings.savedModel(for: groqSTT)
-            if saved.isEmpty || saved.contains("turbo") {
-                STTSettings.saveModel("whisper-large-v3", for: groqSTT)
-            }
-            UserDefaults.standard.set(false, forKey: "useLiveSTT")
-            UserDefaults.standard.set(true, forKey: "useCorrection")
-        case .gemini:
-            // SMART mode usually enough; leave correction as user left it
-            break
-        }
-    }
-
     private func applyKey() {
-        applyProviderSelection()
-        let t = activeKeyBinding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        STTSettings.providerID = "groq"
+        LLMSettings.providerID = "groq"
+        let groq = STTRegistry.provider(id: "groq")
+        let saved = STTSettings.savedModel(for: groq)
+        if saved.isEmpty || saved.contains("turbo") {
+            STTSettings.saveModel("whisper-large-v3", for: groq)
+        }
+        let t = groqKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty {
-            STTSettings.saveKey(t, for: activeSTT)
-            LLMSettings.saveKey(t, for: activeLLM)
+            STTSettings.saveKey(t, for: groqSTT)
+            LLMSettings.saveKey(t, for: groqLLM)
         }
     }
 
     private func saveKey() {
         applyKey()
-        keyMsg = "✅ Saved \(provider.title)"
+        keyMsg = "✅ Saved Groq"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keyMsg = "" }
     }
 
     private func testKey() {
         applyKey()
-        guard let key = STTSettings.key(for: activeSTT) else {
+        guard let key = STTSettings.key(for: groqSTT) else {
             keyMsg = "⚠️ Enter API key first"; return
         }
         keyMsg = "⏳ Testing…"
 
-        switch provider {
-        case .gemini:
-            guard var comps = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models") else { return }
-            comps.queryItems = [URLQueryItem(name: "key", value: key)]
-            guard let url = comps.url else { return }
-            var req = URLRequest(url: url)
-            req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-            URLSession.shared.dataTask(with: req) { _, resp, _ in
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                DispatchQueue.main.async {
-                    keyMsg = code == 200 ? "✅ Gemini key valid" : "❌ Invalid key (code \(code))"
-                }
-            }.resume()
-
-        case .groq:
-            guard let url = URL(string: "https://api.groq.com/openai/v1/models") else { return }
-            var req = URLRequest(url: url)
-            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            URLSession.shared.dataTask(with: req) { _, resp, _ in
-                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                DispatchQueue.main.async {
-                    keyMsg = code == 200 ? "✅ Groq key valid" : "❌ Invalid key (code \(code))"
-                }
-            }.resume()
-        }
+        guard let url = URL(string: "https://api.groq.com/openai/v1/models") else { return }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            DispatchQueue.main.async {
+                keyMsg = code == 200 ? "✅ Groq key valid" : "❌ Invalid key (code \(code))"
+            }
+        }.resume()
     }
 }

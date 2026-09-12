@@ -6,15 +6,15 @@ class AudioRecorder: ObservableObject {
     @Published var recordedFileURL: URL?
     @Published var level: Float = 0   // 0...1 real-time audio level for waveform
 
-    /// Optional live PCM sink (16-bit LE mono @ 16 kHz) for Gemini Live STT.
-    var onPCMChunk: ((Data) -> Void)?
-
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
     private var converter: AVAudioConverter?
     private var tempFileURL: URL?
+    /// Invalidates an in-flight `engine.start()` if stop/cancel wins the race.
+    private var startEpoch: UInt64 = 0
+    private let audioQueue = DispatchQueue(label: "goon.audio.engine")
 
-    // Whisper / Gemini Live require 16kHz mono Int16
+    // Whisper requires 16kHz mono Int16
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16000,
@@ -22,18 +22,24 @@ class AudioRecorder: ObservableObject {
         interleaved: false
     )!
 
-    func startRecording() {
+    /// Start the mic without blocking the caller. Completion is on an arbitrary queue.
+    func startRecording(completion: ((Bool) -> Void)? = nil) {
+        startEpoch &+= 1
+        let epoch = startEpoch
+
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.inputFormat(forBus: 0)
 
         guard inputFormat.sampleRate > 0 else {
             print("❌ Invalid input format (sampleRate = 0) — microphone permission may not be granted")
+            completion?(false)
             return
         }
 
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             print("❌ Cannot create AVAudioConverter: \(inputFormat) → \(targetFormat)")
+            completion?(false)
             return
         }
         self.converter = converter
@@ -52,6 +58,7 @@ class AudioRecorder: ObservableObject {
             )
         } catch {
             print("❌ Failed to create audio file: \(error)")
+            completion?(false)
             return
         }
 
@@ -59,25 +66,44 @@ class AudioRecorder: ObservableObject {
             self?.processBuffer(buffer)
         }
 
-        do {
-            try engine.start()
-            audioEngine = engine
-            isRecording = true
-            print("✅ Recording started → \(tempURL.lastPathComponent) [in: \(inputFormat.sampleRate)Hz \(inputFormat.channelCount)ch]")
-        } catch {
-            print("❌ Failed to start engine: \(error)")
+        audioEngine = engine
+        // engine.start() can block — do not run it on the Fn-up critical path.
+        audioQueue.async { [weak self] in
+            do {
+                try engine.start()
+                DispatchQueue.main.async {
+                    guard let self else {
+                        engine.stop()
+                        completion?(false)
+                        return
+                    }
+                    guard self.startEpoch == epoch else {
+                        engine.stop()
+                        completion?(false)
+                        return
+                    }
+                    self.isRecording = true
+                    print("✅ Recording started → \(tempURL.lastPathComponent) [in: \(inputFormat.sampleRate)Hz \(inputFormat.channelCount)ch]")
+                    completion?(true)
+                }
+            } catch {
+                print("❌ Failed to start engine: \(error)")
+                DispatchQueue.main.async {
+                    completion?(false)
+                }
+            }
         }
     }
 
     /// Stop mic and return the WAV URL without publishing via Combine (avoids double-handle).
     func consumeRecordingURL() -> URL? {
+        startEpoch &+= 1
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
         converter = nil
         audioFile = nil
         isRecording = false
-        onPCMChunk = nil
         DispatchQueue.main.async { self.level = 0 }
 
         let url = tempFileURL
@@ -88,15 +114,15 @@ class AudioRecorder: ObservableObject {
         return url
     }
 
-    /// Stop mic. When `publishFile` is false, delete the temp WAV (unused path).
+    /// Stop mic. When `publishFile` is false, delete the temp WAV (cancel).
     func stopRecording(publishFile: Bool = true) {
+        startEpoch &+= 1
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
         converter = nil
         audioFile = nil
         isRecording = false
-        onPCMChunk = nil
         DispatchQueue.main.async { self.level = 0 }
 
         if let url = tempFileURL {
@@ -107,7 +133,7 @@ class AudioRecorder: ObservableObject {
                 }
             } else {
                 try? FileManager.default.removeItem(at: url)
-                print("✅ Recording stopped (live STT, file discarded)")
+                print("✅ Recording stopped (cancelled, file discarded)")
             }
         }
         tempFileURL = nil
@@ -154,14 +180,6 @@ class AudioRecorder: ObservableObject {
             return
         }
         guard outBuffer.frameLength > 0 else { return }
-
-        // Live PCM callback (Int16 mono)
-        if let sink = onPCMChunk, let ch = outBuffer.int16ChannelData {
-            let frames = Int(outBuffer.frameLength)
-            let bytes = frames * MemoryLayout<Int16>.size
-            let pcm = Data(bytes: ch[0], count: bytes)
-            sink(pcm)
-        }
 
         do {
             try file.write(from: outBuffer)

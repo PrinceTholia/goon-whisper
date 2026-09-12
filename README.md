@@ -2,7 +2,7 @@
 
 macOS menu-bar dictation app — speak with **Fn**, cleaned text pastes into the focused app.
 
-Supports **Groq** (Whisper) and **Google Gemini**. Groq is the recommended free-tier path.
+**Groq-only:** speech is transcribed with Groq Whisper (`whisper-large-v3`). Optional Groq LLM correction is a toggle (menu / Settings), not required.
 
 **Requirements:** macOS 13+, [Xcode Command Line Tools](https://developer.apple.com/xcode/) (`xcode-select --install`).
 
@@ -36,12 +36,13 @@ Whisper turns your speech into text and pastes it where your cursor is. That’s
 | Paste the text **and** press Enter (e.g. send a chat message) | Press **Enter** |
 | Throw it away — don’t paste anything | Press **Esc**, **or** click **✕** on the pill |
 
-**Esc / ✕** means cancel: the recording is deleted. Nothing is transcribed. Nothing is pasted.
+**Esc / ✕** means cancel: the recording is deleted. Nothing is transcribed. Nothing is pasted. Esc during “Cleaning up…” also aborts the in-flight transcript.
 
 #### How Whisper tells hold vs tap apart
 
 - Finger down for less than **0.45 seconds** → continuous (mode 2).
 - Finger down for **0.45 seconds or longer** → hold-to-talk (mode 1: pastes when you release).
+- Hold vs tap is measured from the key event timestamps (not after the microphone engine starts).
 
 #### Optional setting
 
@@ -57,18 +58,17 @@ In Settings, you can turn **Hold to talk** off. Then Fn only toggles recording o
 
 ### Speech → text
 
-- **Providers (Settings):** **Groq** (recommended) or **Google Gemini**.
-- Transcription uses that provider’s STT; optional **AI Correction** polishes fillers / self-corrections with the same provider’s LLM.
+- **Provider:** Groq Whisper (`whisper-large-v3`), batch WAV upload on stop. Settings only needs a Groq API key (Save / Test).
+- Optional **AI Correction** (menu or Settings): Groq LLM polish for fillers / mishears. Off keeps the raw transcript. Default follows whatever you already had saved.
 - **Language** submenu: Auto-detect or a fixed language (en, th, zh, ja, ko, …).
 - **Backtrack** (optional): drops “sorry, I meant…” style restarts when Correction is on.
-- **Live STT** (optional, Gemini only): streams while talking; races against a normal WAV upload.
 - Strips common STT junk (subtitle watermarks, “thanks for watching”, bracketed sound tags, etc.) before paste.
 
 ### Paste behavior
 
 - Remembers the focused app the moment you **stop** (second **Fn**, **Enter**, or **■**).
 - After transcription, brings that app back and pastes there — even if you switched windows while waiting.
-- Same rule for **Enter**: paste + simulated Enter go to the app that was focused when you pressed Enter.
+- Same rule for **Enter**: paste + simulated Enter go to the app that was focused when you pressed Enter. Enter waits until that app is frontmost; it is not claimed if paste only copied to the clipboard.
 - Uses one paste strategy at a time (avoids double-paste in browsers / Electron).
 - If Accessibility can’t paste: text stays on the clipboard for ⌘V.
 
@@ -81,11 +81,11 @@ In Settings, you can turn **Hold to talk** off. Then Fn only toggles recording o
 
 ### Menu bar
 
-Mic icon → Start/Stop, Settings, Dictionary, STT / Correction / Live / Backtrack / Language toggles, Fix Accessibility, Test Auto-Paste, Restart, Quit.
+Mic icon → Start/Stop, Settings, Dictionary, STT Cloud / Correction / Backtrack / Language toggles, Fix Accessibility, Test Auto-Paste, Restart, Quit.
 
 ---
 
-## Quick start (Groq)
+## Quick start
 
 ### 1. Get a Groq API key
 
@@ -133,11 +133,10 @@ Keyboard → Dictation → Shortcut → **Off**.
 ### 4. Add your Groq key in the app
 
 1. Click the mic icon in the menu bar → **Settings…**  
-2. Choose **Groq**  
-3. Paste your API key → **Save** → **Test**  
-4. Leave **AI Correction** on if you want Groq LLM cleanup after Whisper  
+2. Paste your Groq API key → **Save** → **Test**  
+3. Turn **AI Correction** on in Settings or the menu if you want Groq LLM cleanup after Whisper  
 
-Keys are stored locally under `~/.whisperapp/` (not in the repo).
+Keys are stored locally under `~/.whisperapp/` (not in the repo). You can also set `GROQ_API_KEY` in `~/.zshrc`.
 
 ### 5. Use it
 
@@ -145,16 +144,6 @@ Keys are stored locally under `~/.whisperapp/` (not in the repo).
 - **Tap Fn**, speak as long as you want → **Enter** to paste & send, **Fn** or **■** to paste only, **Esc** or **✕** to cancel.
 
 Full detail: **Features** above.
-
----
-
-## Gemini (optional)
-
-1. Key: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)  
-2. Settings → **Google Gemini** → paste key → Save  
-3. Same Fn workflow  
-
-Or: `export GEMINI_API_KEY='…'` then `./scripts/install_gemini_key.sh`
 
 ---
 
@@ -180,7 +169,7 @@ Signing helper (one-time Keychain ACL so rebuilds don’t ask for password every
 |---------|-----|
 | No paste / text only on clipboard | Re-add app in **Accessibility**; enable **Automation → System Events** |
 | Fn opens system Dictation / pauses music | Dictation shortcut → **Off** |
-| “No API key” | Settings → pick Groq or Gemini → paste key → Save |
+| “No API key” | Settings → paste Groq key → Save |
 | Double paste in browser | Update to latest `main` (paste paths are exclusive) |
 | Accessibility resets every rebuild | Sign with **Goon Whisper Dev** via `./make_app.sh` (not ad-hoc `-`) |
 | Esc / Enter ignored in other apps while hands-free | Grant **Accessibility** to `/Applications/Whisper.app` |

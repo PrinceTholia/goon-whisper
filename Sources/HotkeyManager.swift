@@ -66,12 +66,17 @@ class HotkeyManager {
     private var config: HotkeyConfig
     private var isHolding = false
     private var modifierKeyDown = false
+    /// Event-time of matching Fn-down (`NSEvent.timestamp`). 0 = no matching press.
     private var modifierDownAt: TimeInterval = 0
     /// How long Fn may stay down and still count as a *tap* (hands-free).
     /// Longer than this → push-to-talk (stop on release).
     /// 0.28s was too tight — normal finger taps often exceeded it and became PTT by mistake.
     private let holdThreshold: TimeInterval = 0.45
     private var lastModifierPress: TimeInterval = 0
+    /// After stopping hands-free on Fn-down, ignore the matching key-up (do not re-enter HF).
+    private var suppressNextRelease = false
+    /// Esc aborts in-flight STT / correction after stop (tap stays armed).
+    private var inFlightEscArmed = false
 
     /// Hands-free (single-tap) continuous session.
     private(set) var handsFreeActive = false
@@ -81,6 +86,8 @@ class HotkeyManager {
     var onHandsFreeEnter: (() -> Void)?
     /// Escape during hands-free → cancel (no paste).
     var onHandsFreeCancel: (() -> Void)?
+    /// Escape while transcribing / correcting / pasting → abort that generation.
+    var onProcessingCancel: (() -> Void)?
 
     private var enterEventTap: CFMachPort?
     private var enterRunLoopSource: CFRunLoopSource?
@@ -92,8 +99,17 @@ class HotkeyManager {
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         lastModifierPress = 0
-        setHandsFreeKeyTapEnabled(false)
+        if modifierKeyDown {
+            suppressNextRelease = true
+        }
+        syncKeyTap()
         onHandsFreeChanged?(false)
+    }
+
+    /// Keep the CGEvent tap alive so Esc can abort STT after stop.
+    func setInFlightEscArmed(_ on: Bool) {
+        inFlightEscArmed = on
+        syncKeyTap()
     }
 
     var onKeyDown: (() -> Void)?
@@ -122,6 +138,8 @@ class HotkeyManager {
         }
         handsFreeActive = false
         pendingHoldStop?.cancel()
+        suppressNextRelease = false
+        modifierDownAt = 0
         restartMonitors()
     }
 
@@ -131,7 +149,10 @@ class HotkeyManager {
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         handsFreeActive = false
-        setHandsFreeKeyTapEnabled(false)
+        inFlightEscArmed = false
+        suppressNextRelease = false
+        modifierDownAt = 0
+        syncKeyTap()
         if let m = globalMonitor { NSEvent.removeMonitor(m); globalMonitor = nil }
         if let m = localMonitor { NSEvent.removeMonitor(m); localMonitor = nil }
         tearDownHandsFreeKeyTap()
@@ -141,6 +162,7 @@ class HotkeyManager {
         let wasHF = handsFreeActive
         let enterCB = onHandsFreeEnter
         let cancelCB = onHandsFreeCancel
+        let processingCB = onProcessingCancel
         let down = onKeyDown
         let up = onKeyUp
         let active = isActive
@@ -152,6 +174,7 @@ class HotkeyManager {
 
         onHandsFreeEnter = enterCB
         onHandsFreeCancel = cancelCB
+        onProcessingCancel = processingCB
         onKeyDown = down
         onKeyUp = up
         isActive = active
@@ -172,12 +195,16 @@ class HotkeyManager {
                     self.fireHandsFreeCancel()
                     return nil
                 }
+                if self.shouldSwallowInFlightEscape(event) {
+                    self.fireProcessingCancel()
+                    return nil
+                }
             }
             self?.handleEvent(event)
             return event
         }
         ensureHandsFreeKeyTap()
-        setHandsFreeKeyTapEnabled(wasHF)
+        syncKeyTap()
     }
 
     private func handleEvent(_ event: NSEvent) {
@@ -219,14 +246,14 @@ class HotkeyManager {
 
         if isDown && !modifierKeyDown {
             modifierKeyDown = true
-            handleModifierPressed()
+            handleModifierPressed(at: event.timestamp)
         } else if !isDown && modifierKeyDown {
             modifierKeyDown = false
-            handleModifierReleased()
+            handleModifierReleased(at: event.timestamp)
         }
     }
 
-    private func handleModifierPressed() {
+    private func handleModifierPressed(at timestamp: TimeInterval) {
         // Hands-free active → tap Fn stops (paste, no auto-Enter)
         if handsFreeActive {
             // Capture focus NOW (before any async hop) — same rule as Enter
@@ -234,7 +261,10 @@ class HotkeyManager {
             handsFreeActive = false
             pendingHoldStop?.cancel()
             lastModifierPress = 0
-            setHandsFreeKeyTapEnabled(false)
+            // Matching Fn-up must not re-enter hands-free with no recording.
+            suppressNextRelease = true
+            modifierDownAt = 0
+            syncKeyTap()
             onHandsFreeChanged?(false)
             onKeyUp?()
             return
@@ -243,12 +273,13 @@ class HotkeyManager {
         // Pure toggle mode (settings): each Fn press toggles recording
         if !config.isHoldMode {
             lastModifierPress = 0
+            modifierDownAt = timestamp
             onKeyDown?()
             return
         }
 
-        // Hold mode: Fn down → always start recording immediately
-        modifierDownAt = ProcessInfo.processInfo.systemUptime
+        // Hold mode: classify tap/hold from *event* time, not wall-clock after engine.start().
+        modifierDownAt = timestamp
         pendingHoldStop?.cancel()
         pendingHoldStop = nil
         if isActive?() != true {
@@ -256,16 +287,24 @@ class HotkeyManager {
         }
     }
 
-    private func handleModifierReleased() {
+    private func handleModifierReleased(at timestamp: TimeInterval) {
+        if suppressNextRelease {
+            suppressNextRelease = false
+            modifierDownAt = 0
+            return
+        }
         guard config.isHoldMode else { return }
         guard !handsFreeActive else { return }
+        // Unmatched Fn-up (never pressed / already consumed) is not a long hold.
+        guard modifierDownAt > 0 else { return }
 
-        let held = ProcessInfo.processInfo.systemUptime - modifierDownAt
+        let held = timestamp - modifierDownAt
+        modifierDownAt = 0
         if held < holdThreshold {
             // Quick tap → keep recording as continuous hands-free
             handsFreeActive = true
             onHandsFreeChanged?(true)
-            setHandsFreeKeyTapEnabled(true)
+            syncKeyTap()
             print("🎙️ Single-tap Fn → hands-free continuous")
         } else {
             // Held long enough → classic PTT stop on release
@@ -292,6 +331,11 @@ class HotkeyManager {
         return UInt32(event.keyCode) == UInt32(kVK_Escape)
     }
 
+    private func shouldSwallowInFlightEscape(_ event: NSEvent) -> Bool {
+        guard inFlightEscArmed, event.type == .keyDown else { return false }
+        return UInt32(event.keyCode) == UInt32(kVK_Escape)
+    }
+
     private func fireHandsFreeEnter() {
         // Remember caret app the instant Enter is pressed — before async / window switches
         FocusMemory.capture()
@@ -301,7 +345,7 @@ class HotkeyManager {
             self.pendingHoldStop?.cancel()
             self.pendingHoldStop = nil
             self.lastModifierPress = 0
-            self.setHandsFreeKeyTapEnabled(false)
+            self.syncKeyTap()
             self.onHandsFreeChanged?(false)
             self.onHandsFreeEnter?()
         }
@@ -314,9 +358,16 @@ class HotkeyManager {
             self.pendingHoldStop?.cancel()
             self.pendingHoldStop = nil
             self.lastModifierPress = 0
-            self.setHandsFreeKeyTapEnabled(false)
+            self.syncKeyTap()
             self.onHandsFreeChanged?(false)
             self.onHandsFreeCancel?()
+        }
+    }
+
+    private func fireProcessingCancel() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.inFlightEscArmed else { return }
+            self.onProcessingCancel?()
         }
     }
 
@@ -330,20 +381,31 @@ class HotkeyManager {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(mask),
             callback: { _, type, event, refcon -> Unmanaged<CGEvent>? in
-                guard type == .keyDown else {
-                    return Unmanaged.passUnretained(event)
-                }
                 guard let refcon else {
                     return Unmanaged.passUnretained(event)
                 }
                 let mgr = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
-                guard mgr.handsFreeActive else {
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    mgr.syncKeyTap()
+                    return Unmanaged.passUnretained(event)
+                }
+                guard type == .keyDown else {
                     return Unmanaged.passUnretained(event)
                 }
                 let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
                 if keyCode == Int64(kVK_Escape) {
-                    mgr.fireHandsFreeCancel()
-                    return nil
+                    if mgr.handsFreeActive {
+                        mgr.fireHandsFreeCancel()
+                        return nil
+                    }
+                    if mgr.inFlightEscArmed {
+                        mgr.fireProcessingCancel()
+                        return nil
+                    }
+                    return Unmanaged.passUnretained(event)
+                }
+                guard mgr.handsFreeActive else {
+                    return Unmanaged.passUnretained(event)
                 }
                 guard keyCode == Int64(kVK_Return) || keyCode == Int64(kVK_ANSI_KeypadEnter) else {
                     return Unmanaged.passUnretained(event)
@@ -371,8 +433,9 @@ class HotkeyManager {
         CGEvent.tapEnable(tap: tap, enable: false)
     }
 
-    private func setHandsFreeKeyTapEnabled(_ on: Bool) {
+    private func syncKeyTap() {
         ensureHandsFreeKeyTap()
+        let on = handsFreeActive || inFlightEscArmed
         if let tap = enterEventTap {
             CGEvent.tapEnable(tap: tap, enable: on)
         }

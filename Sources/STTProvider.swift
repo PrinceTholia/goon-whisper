@@ -1,11 +1,9 @@
 import Foundation
 
-/// Cloud Speech-to-Text providers — supports multiple providers
-/// - elevenlabs: ElevenLabs Scribe (multipart, header xi-api-key, language ISO 639-3)
-/// - openAI: OpenAI / Groq / custom (multipart, Bearer auth, language ISO 639-1)
-/// - gemini: Google Gemini Transcribe (JSON + inline audio / Files API)
+/// Cloud Speech-to-Text providers.
+/// Product path is Groq (OpenAI-compatible multipart). Other registry rows are unused leftovers.
 struct STTProvider: Identifiable, Hashable {
-    enum Style: String { case elevenlabs, openAI, gemini }
+    enum Style: String { case elevenlabs, openAI }
 
     let id: String
     let name: String
@@ -25,10 +23,10 @@ struct STTProvider: Identifiable, Hashable {
 
 enum STTRegistry {
     static let all: [STTProvider] = [
-        STTProvider(id: "gemini", name: "Google Gemini",
-                    defaultEndpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
-                    defaultModel: "gemini-3.5-transcribe",
-                    envKey: "GEMINI_API_KEY", style: .gemini),
+        STTProvider(id: "groq", name: "Groq (Whisper)",
+                    defaultEndpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
+                    defaultModel: "whisper-large-v3",
+                    envKey: "GROQ_API_KEY", style: .openAI),
         STTProvider(id: "elevenlabs", name: "ElevenLabs Scribe",
                     defaultEndpoint: "https://api.elevenlabs.io/v1/speech-to-text",
                     defaultModel: "scribe_v1",
@@ -37,10 +35,6 @@ enum STTRegistry {
                     defaultEndpoint: "https://api.openai.com/v1/audio/transcriptions",
                     defaultModel: "gpt-4o-transcribe",
                     envKey: "OPENAI_API_KEY", style: .openAI),
-        STTProvider(id: "groq", name: "Groq (Whisper)",
-                    defaultEndpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
-                    defaultModel: "whisper-large-v3",
-                    envKey: "GROQ_API_KEY", style: .openAI),
         STTProvider(id: "stt_custom", name: "Custom (OpenAI-compatible)",
                     defaultEndpoint: "",
                     defaultModel: "",
@@ -58,7 +52,7 @@ enum STTSettings {
     private static let providerKey = "stt.provider"
 
     static var providerID: String {
-        get { defaults.string(forKey: providerKey) ?? "gemini" }
+        get { defaults.string(forKey: providerKey) ?? "groq" }
         set { defaults.set(newValue, forKey: providerKey) }
     }
 

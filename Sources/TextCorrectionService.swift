@@ -1,16 +1,21 @@
 import Foundation
 
-/// Send raw transcription text to LLM (cloud) to fix typos, punctuation, and sentence structure.
-/// Supports multiple providers (DeepSeek, OpenAI, Groq, OpenRouter, Gemini, Anthropic, Custom)
-/// via LLMSettings — see LLMProvider.swift
+/// Send raw transcription text to Groq (or leftover unused providers) to polish STT.
 class TextCorrectionService: ObservableObject {
     @Published var isEnabled = true
     @Published var isCorrecting = false
 
     private var provider: LLMProvider { LLMSettings.current }
     private var apiKey: String? { LLMSettings.key(for: provider) }
+    private var currentTask: URLSessionDataTask?
 
     var isAvailable: Bool { apiKey != nil }
+
+    func cancel() {
+        currentTask?.cancel()
+        currentTask = nil
+        DispatchQueue.main.async { self.isCorrecting = false }
+    }
 
     func correct(text: String, language: String, backtrack: Bool = false,
                  completion: @escaping (Result<String, DictationAPIError>) -> Void) {
@@ -117,10 +122,13 @@ class TextCorrectionService: ObservableObject {
         DispatchQueue.main.async { self.isCorrecting = true }
 
         let style = p.style
-        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+        currentTask?.cancel()
+        let task = URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
             DispatchQueue.main.async { self?.isCorrecting = false }
 
             if let error = error {
+                let ns = error as NSError
+                if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
                 completion(.failure(.network(error.localizedDescription))); return
             }
             let http = response as? HTTPURLResponse
@@ -156,7 +164,9 @@ class TextCorrectionService: ObservableObject {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             completion(cleaned.isEmpty ? .failure(.emptyResponse) : .success(cleaned))
-        }.resume()
+        }
+        currentTask = task
+        task.resume()
     }
 
     /// Extract text from the response based on the provider's API style

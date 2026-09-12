@@ -15,7 +15,7 @@ enum Stage: Equatable {
     case error(String)
 }
 
-/// Orchestrates everything: record → transcribe (cloud/local) → correct (LLM) → paste into focused app
+/// Orchestrates everything: record → transcribe (Groq Whisper) → optional LLM correct → paste
 class DictationController: ObservableObject {
     @Published var isRecording = false
     /// True while tap-Fn hands-free session is active (shows X / stop on pill; Esc cancels).
@@ -25,13 +25,9 @@ class DictationController: ObservableObject {
     @Published var status = ""
     @Published var stage: Stage = .idle
     @Published var useCloudSTT = true
-    /// Off by default: Gemini SMART mode already cleans fillers / self-corrections.
+    /// Optional Groq LLM polish. Default follows existing UserDefaults (off if unset).
     @Published var useCorrection: Bool {
         didSet { UserDefaults.standard.set(useCorrection, forKey: Self.correctionKey) }
-    }
-    /// Stream to gemini-3.5-transcribe-live while holding Fn (falls back to batch WAV).
-    @Published var useLiveSTT: Bool {
-        didSet { UserDefaults.standard.set(useLiveSTT, forKey: Self.liveKey) }
     }
     /// Wispr-style Backtrack: drop false starts / “sorry, I meant…” restatements. Default OFF.
     @Published var useBacktrack: Bool {
@@ -44,24 +40,24 @@ class DictationController: ObservableObject {
     private static let backtrackKey = "backtrackEnabled"
     private static let languageKey = "dictationLanguage"
     private static let correctionKey = "useCorrection"
-    private static let liveKey = "useLiveSTT"
 
     let recorder = AudioRecorder()
     private let whisper = WhisperService()
     private let cloud = CloudTranscriptionService()
     private let correction = TextCorrectionService()
-    private var liveSTT: GeminiLiveTranscriptionService?
-    private var liveActive = false
-    private var processing = false
+    /// True from stop until paste (or fail/cancel). Blocks a new `start()` so old WAV cannot paste into a new session.
+    private(set) var processing = false
+    /// Bumped on start / cancel so in-flight STT, correction, and paste no-op.
+    private var sessionGeneration: UInt64 = 0
     private var cancellables = Set<AnyCancellable>()
+    private var statusItemToken: String? = nil
+    private var rateLimitTimer: Timer?
 
     init() {
         useBacktrack = UserDefaults.standard.bool(forKey: Self.backtrackKey) // default false
 
-        // Prefer fast batch by default — Live can hang; menu can re-enable streaming.
         if !UserDefaults.standard.bool(forKey: "qualityDefaults131") {
             UserDefaults.standard.set(false, forKey: Self.correctionKey)
-            UserDefaults.standard.set(false, forKey: Self.liveKey)
             UserDefaults.standard.set("auto", forKey: Self.languageKey)
             UserDefaults.standard.set(true, forKey: "qualityDefaults131")
         }
@@ -71,11 +67,6 @@ class DictationController: ObservableObject {
         } else {
             useCorrection = UserDefaults.standard.bool(forKey: Self.correctionKey)
         }
-        if UserDefaults.standard.object(forKey: Self.liveKey) == nil {
-            useLiveSTT = true
-        } else {
-            useLiveSTT = UserDefaults.standard.bool(forKey: Self.liveKey)
-        }
         language = UserDefaults.standard.string(forKey: Self.languageKey) ?? "auto"
         recorder.$recordedFileURL
             .compactMap { $0 }
@@ -84,188 +75,130 @@ class DictationController: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func toggle() { recorder.isRecording ? stop() : start() }
+    var isBusy: Bool {
+        processing || isRecording || stage == .recording
+            || stage == .transcribing || stage == .correcting
+    }
+
+    func toggle() { recorder.isRecording || isRecording ? stop() : start() }
 
     func start() {
-        guard !processing, !recorder.isRecording else { return }
+        clearRateLimitCountdown()
+        guard !processing, !recorder.isRecording, !isRecording else { return }
+        sessionGeneration &+= 1
         FocusMemory.capture()
 
-        let wantLive = useCloudSTT && useLiveSTT && STTSettings.current.style == .gemini
-        if wantLive, let key = STTSettings.key(for: STTSettings.current) {
-            var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 80)
-            if let app = FocusMemory.lastAppName { vocab.insert(app, at: 0) }
-            let live = GeminiLiveTranscriptionService()
-            liveSTT = live
-            liveActive = false
-            live.start(apiKey: key, vocabulary: vocab) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    switch result {
-                    case .success:
-                        self.liveActive = true
-                        print("✅ Live STT ready")
-                    case .failure(let err):
-                        print("⚠️ Live STT setup failed (\(err.detailMessage)); will use batch on stop")
-                        self.liveSTT = nil
-                        self.liveActive = false
-                    }
+        // Show HUD immediately — engine.start() must not gate the Fn-up classifier.
+        isRecording = true
+        status = "Listening…"
+        stage = .recording
+        FeedbackSound.playStart()
+
+        recorder.startRecording { [weak self] ok in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if !ok {
+                    self.isRecording = false
+                    self.status = "❌ Microphone unavailable"
+                    self.stage = .error("Microphone unavailable")
                 }
             }
-            recorder.onPCMChunk = { [weak live] data in live?.sendPCM(data) }
-        } else {
-            liveSTT = nil
-            liveActive = false
-            recorder.onPCMChunk = nil
-        }
-
-        recorder.startRecording()
-        isRecording = recorder.isRecording
-        if isRecording {
-            FeedbackSound.playStart()
-            status = wantLive ? "Listening (live)…" : "Listening…"
-            stage = .recording
-        } else {
-            liveSTT?.cancel()
-            liveSTT = nil
-            status = "❌ Microphone unavailable"
-            stage = .error("Microphone unavailable")
         }
     }
 
-
-    /// Abort recording without pasting (hands-free ✕ / Esc).
+    /// Abort recording or in-flight STT/correction without pasting (hands-free ✕ / Esc).
     func cancelRecording() {
-        guard recorder.isRecording || stage == .recording else {
-            stage = .idle
-            isRecording = false
-            handsFreeUI = false
-            return
+        clearRateLimitCountdown()
+        sessionGeneration &+= 1
+        sendEnterAfterPaste = false
+        cloud.cancel()
+        correction.cancel()
+        HotkeyManager.shared.endHandsFreeSession()
+        HotkeyManager.shared.setInFlightEscArmed(false)
+
+        let wasRecording = recorder.isRecording || isRecording || stage == .recording
+        if recorder.isRecording {
+            recorder.stopRecording(publishFile: false)
         }
-        liveSTT?.cancel()
-        liveSTT = nil
-        liveActive = false
-        recorder.onPCMChunk = nil
-        recorder.stopRecording(publishFile: false)
         isRecording = false
         processing = false
         handsFreeUI = false
-        sendEnterAfterPaste = false
         status = "Cancelled"
         stage = .idle
-        FeedbackSound.playStop()
+        if wasRecording {
+            FeedbackSound.playStop()
+        }
     }
 
     func stop(sendEnterAfterPaste: Bool = false, recaptureFocus: Bool = true) {
-        guard recorder.isRecording else { return }
+        guard recorder.isRecording || isRecording || stage == .recording else { return }
         // Default: remember caret app at stop. Enter path passes recaptureFocus: false
         // because HotkeyManager already captured the instant Enter was pressed.
         if recaptureFocus {
             FocusMemory.capture()
         }
         self.sendEnterAfterPaste = sendEnterAfterPaste
+        // Batch and live: lock out a new start until this generation pastes or fails.
+        processing = true
+        HotkeyManager.shared.setInFlightEscArmed(true)
+        HotkeyManager.shared.endHandsFreeSession()
+        handsFreeUI = false
         FeedbackSound.playStop()
         isRecording = false
         status = "⏳ Processing…"
         stage = .transcribing
 
-        // Always keep WAV for batch; race Live vs batch so we never wait on a hung socket.
-        let live = liveSTT
-        let wasLive = liveActive
-        liveSTT = nil
-        liveActive = false
-        recorder.onPCMChunk = nil
-
-        if let live, wasLive {
-            processing = true
-            guard let url = recorder.consumeRecordingURL() else {
-                live.cancel()
-                afterSTT(.failure(.emptyResponse))
-                return
-            }
-
-            let gate = STTRaceGate()
-            live.finish { [weak self] result in
-                guard let self else { return }
-                if case .success(let text) = result,
-                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   gate.claimWin() {
-                    live.cancel()
-                    try? FileManager.default.removeItem(at: url)
-                    print("✅ Live STT won race")
-                    self.afterSTT(.success(text))
-                } else if case .failure(let err) = result, gate.claimLoss() {
-                    try? FileManager.default.removeItem(at: url)
-                    self.afterSTT(.failure(err))
-                } else if case .success = result, gate.claimLoss() {
-                    try? FileManager.default.removeItem(at: url)
-                    self.afterSTT(.failure(.emptyResponse))
-                }
-            }
-            cloud.transcribe(fileURL: url, language: language) { [weak self] result in
-                guard let self else { return }
-                if case .success(let text) = result,
-                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   gate.claimWin() {
-                    live.cancel()
-                    try? FileManager.default.removeItem(at: url)
-                    print("✅ Batch STT won race")
-                    self.afterSTT(.success(text))
-                } else if case .failure(let err) = result, gate.claimLoss() {
-                    live.cancel()
-                    try? FileManager.default.removeItem(at: url)
-                    self.afterSTT(.failure(err))
-                } else if case .success = result, gate.claimLoss() {
-                    live.cancel()
-                    try? FileManager.default.removeItem(at: url)
-                    self.afterSTT(.failure(.emptyResponse))
-                }
-            }
-            return
-        }
-
-        live?.cancel()
         recorder.stopRecording(publishFile: true)
     }
 
     private func handleAudio(_ url: URL) {
+        let gen = sessionGeneration
         processing = true
         let lang = language
 
         DispatchQueue.main.async {
+            guard self.sessionGeneration == gen else {
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
             self.status = self.useCloudSTT ? "☁️ Transcribing…" : "📝 Transcribing…"
             self.stage = .transcribing
         }
 
         if useCloudSTT {
-            cloud.transcribe(fileURL: url, language: lang) { result in
+            cloud.transcribe(fileURL: url, language: lang) { [weak self] result in
                 try? FileManager.default.removeItem(at: url)
-                self.afterSTT(result)
+                guard let self, self.sessionGeneration == gen else { return }
+                self.afterSTT(result, generation: gen)
             }
         } else {
             whisper.language = lang
-            whisper.transcribe(fileURL: url) { result in
+            whisper.transcribe(fileURL: url) { [weak self] result in
+                guard let self, self.sessionGeneration == gen else { return }
                 if let result {
-                    self.afterSTT(.success(result))
+                    self.afterSTT(.success(result), generation: gen)
                 } else {
-                    self.afterSTT(.failure(.emptyResponse))
+                    self.afterSTT(.failure(.emptyResponse), generation: gen)
                 }
             }
         }
     }
 
-    private func afterSTT(_ result: Result<String, DictationAPIError>) {
+    private func afterSTT(_ result: Result<String, DictationAPIError>, generation: UInt64) {
+        guard sessionGeneration == generation else { return }
         let lang = language
         switch result {
         case .failure(let err):
-            failOnMain(err)
+            failOnMain(err, generation: generation)
         case .success(let raw):
             let text = stripSoundAnnotations(raw)
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                failOnMain(.emptyResponse)
+                failOnMain(.emptyResponse, generation: generation)
                 return
             }
             if useCorrection {
                 DispatchQueue.main.async {
+                    guard self.sessionGeneration == generation else { return }
                     self.status = "✨ AI correction…"
                     self.stage = .correcting
                 }
@@ -274,66 +207,82 @@ class DictationController: ObservableObject {
                     language: lang,
                     backtrack: UserDefaults.standard.bool(forKey: Self.backtrackKey)
                 ) { [weak self] corr in
-                    guard let self else { return }
+                    guard let self, self.sessionGeneration == generation else { return }
                     switch corr {
                     case .success(let cleaned):
-                        self.finishOnMain(cleaned)
+                        self.finishOnMain(cleaned, generation: generation)
                     case .failure(let err):
+                        // Never drop a good transcript on correction 429 / other LLM failure.
                         if case .rateLimited = err {
-                            self.failOnMain(err)
+                            print("⚠️ Correction rate-limited; pasting raw transcript")
                         } else if case .http(let status, _, _) = err, status == 429 {
-                            self.failOnMain(err)
+                            print("⚠️ Correction 429; pasting raw transcript")
                         } else {
                             print("⚠️ Correction failed (\(err.detailMessage)); pasting raw transcript")
-                            self.finishOnMain(text)
                         }
+                        self.finishOnMain(text, generation: generation, correctionSkipped: true)
                     }
                 }
             } else {
-                finishOnMain(text)
+                finishOnMain(text, generation: generation)
             }
         }
     }
 
-    private func finishOnMain(_ text: String) {
+    private func finishOnMain(_ text: String, generation: UInt64, correctionSkipped: Bool = false) {
         DispatchQueue.main.async {
+            guard self.sessionGeneration == generation else { return }
+            self.clearRateLimitCountdown()
             let final = CorrectionDictionary.shared.apply(to: text)
-            self.processing = false
             let wantEnter = self.sendEnterAfterPaste
             self.sendEnterAfterPaste = false
 
-            let outcome = Paster.paste(final)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                DictionaryLearner.watchAfterPaste(final)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+                guard let self, self.sessionGeneration == generation, self.processing else { return }
+                self.processing = false
+                HotkeyManager.shared.setInFlightEscArmed(false)
             }
 
-            switch outcome {
-            case .inserted:
-                self.status = wantEnter ? "✅ Pasted + Enter" : "✅ Pasted"
-                self.stage = .done("")
-                if wantEnter {
-                    // Wait for async ⌘V paths (browser ~0.22s, native ~0.12s)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                        Paster.simulateReturn()
+            Paster.paste(final) { [weak self] pasted in
+                guard let self, self.sessionGeneration == generation else { return }
+                self.processing = false
+                HotkeyManager.shared.setInFlightEscArmed(false)
+
+                switch pasted {
+                case .inserted:
+                    if correctionSkipped {
+                        self.status = wantEnter ? "✅ Pasted + Enter (correction skipped)" : "✅ Pasted (correction skipped)"
+                    } else {
+                        self.status = wantEnter ? "✅ Pasted + Enter" : "✅ Pasted"
+                    }
+                    self.stage = .done("")
+                    if wantEnter {
+                        Paster.simulateReturnWhenFocused()
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (wantEnter ? 0.7 : 0.12)) { [weak self] in
+                        if case .done = self?.stage { self?.stage = .idle }
+                    }
+                case .copiedOnly:
+                    self.status = "Copied — press ⌘V to paste"
+                    self.stage = .copied
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+                        if case .copied = self?.stage { self?.stage = .idle }
                     }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + (wantEnter ? 0.7 : 0.12)) { [weak self] in
-                    if case .done = self?.stage { self?.stage = .idle }
-                }
-            case .copiedOnly:
-                self.status = "Copied — press ⌘V to paste"
-                self.stage = .copied
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
-                    if case .copied = self?.stage { self?.stage = .idle }
-                }
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                DictionaryLearner.watchAfterPaste(final)
             }
         }
     }
 
-    private func failOnMain(_ err: DictationAPIError) {
+    private func failOnMain(_ err: DictationAPIError, generation: UInt64) {
         DispatchQueue.main.async {
+            guard self.sessionGeneration == generation else { return }
             self.sendEnterAfterPaste = false
             self.processing = false
+            HotkeyManager.shared.setInFlightEscArmed(false)
             self.showAPIError(err)
         }
     }
@@ -348,6 +297,7 @@ class DictationController: ObservableObject {
             var left = Int(ceil(sec))
             let token = UUID().uuidString
             statusItemToken = token
+            rateLimitTimer?.invalidate()
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] timer in
                 guard let self = self, self.statusItemToken == token else {
                     timer.invalidate(); return
@@ -355,13 +305,31 @@ class DictationController: ObservableObject {
                 left -= 1
                 if left <= 0 {
                     timer.invalidate()
-                    self.status = "Ready — try again"
-                    self.stage = .idle
+                    self.rateLimitTimer = nil
+                    if self.isRecording || self.processing || self.recorder.isRecording {
+                        return
+                    }
+                    switch self.stage {
+                    case .recording, .transcribing, .correcting:
+                        return
+                    default:
+                        self.status = "Ready — try again"
+                        self.stage = .idle
+                    }
                     return
                 }
-                self.stage = .error("Rate limit — wait ~\(left)s")
-                self.status = "Rate limit — please wait \(left)s, then dictate again"
+                if self.isRecording || self.processing || self.recorder.isRecording {
+                    return
+                }
+                switch self.stage {
+                case .recording, .transcribing, .correcting:
+                    return
+                default:
+                    self.stage = .error("Rate limit — wait ~\(left)s")
+                    self.status = "Rate limit — please wait \(left)s, then dictate again"
+                }
             }
+            rateLimitTimer = timer
             RunLoop.main.add(timer, forMode: .common)
             return
         }
@@ -371,12 +339,17 @@ class DictationController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             guard let self = self else { return }
             if case .error(let m) = self.stage, m == msg {
+                if self.isRecording || self.processing { return }
                 self.stage = .idle
             }
         }
     }
 
-    private var statusItemToken: String? = nil
+    private func clearRateLimitCountdown() {
+        statusItemToken = nil
+        rateLimitTimer?.invalidate()
+        rateLimitTimer = nil
+    }
 
     private func stripSoundAnnotations(_ text: String) -> String {
         var result = text
@@ -416,26 +389,5 @@ class DictationController: ObservableObject {
             result = result.replacingOccurrences(of: p, with: " ", options: .regularExpression)
         }
         return result
-    }
-}
-
-/// First successful STT result wins; errors only surface after both paths fail.
-private final class STTRaceGate {
-    private let lock = NSLock()
-    private var won = false
-    private var losses = 0
-
-    func claimWin() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if won { return false }
-        won = true
-        return true
-    }
-
-    func claimLoss() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if won { return false }
-        losses += 1
-        return losses >= 2
     }
 }

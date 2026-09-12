@@ -10,7 +10,7 @@ import Foundation
 ///
 /// Used three ways:
 ///  - `hintForPrompt` / `confusableHintForPrompt`: LLM correction context
-///  - `vocabularyHints`: bias Whisper / Gemini toward valid spellings
+///  - `vocabularyHints`: bias Groq Whisper toward valid spellings
 ///  - `apply(to:)`: deterministic replace before paste (rules only — never confusables)
 ///
 /// Matching rules for `wrong -> right`:
@@ -227,7 +227,7 @@ final class CorrectionDictionary {
         lastMtime = Date()
     }
 
-    /// Desired spellings / terms to bias Whisper / Gemini.
+    /// Desired spellings / terms to bias Groq Whisper.
     /// Includes dictionary "to" sides and all sound-alike group members.
     func vocabularyHints(limit: Int = 100) -> [String] {
         let snap = snapshot()

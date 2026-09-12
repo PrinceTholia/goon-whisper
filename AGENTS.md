@@ -3,21 +3,21 @@
 
 ## Whisper (this fork)
 
-macOS menu-bar dictation: hold Fn, record locally, Google Gemini STT (`gemini-3.5-transcribe`), optional Gemini cleanup, paste into the focused app. Swift SPM target `WhisperApp`, bundle ID `com.game.whisperapp`. Upstream notes live in `CLAUDE.md`; do not treat `README.md` clone URLs as this fork.
+macOS menu-bar dictation: hold Fn, record locally, Groq Whisper STT (`whisper-large-v3`), optional Groq LLM cleanup, paste into the focused app. Swift SPM target `WhisperApp`, bundle ID `com.game.whisperapp`. Upstream notes live in `CLAUDE.md`; do not treat `README.md` clone URLs as this fork.
 
 ## Policy
 
 - Never rename the SPM target `WhisperApp`, bundle ID `com.game.whisperapp`, or the GitHub repo identity — TCC and history bind to those. Bundle folder `Whisper.app` may stay.
 - Never merge `feat/apple-live-dictation` — user rolled it back; Apple live caret insert did not work. Keep batch paste until a new proven path exists.
 - Never push this fork to `upstream` (`Gamezxz/WhisperApp`) or to MyWhisperFlow remotes unless the user explicitly asks. Ship to `origin` (`PrinceTholia/goon-whisper`).
-- Never put API keys in git. Keys live in `~/.whisperapp/` or `GEMINI_API_KEY`. Provider is Google Gemini (AI Studio key from aistudio.google.com/apikey).
+- Never put API keys in git. Keys live in `~/.whisperapp/` or `GROQ_API_KEY`. Provider is Groq only (console.groq.com). Do not add Gemini (or Gemini Live) back to the product path.
 
 ## Where things are
 
 - Pipeline: `Sources/DictationController.swift` (record → STT → correction → paste)
 - Paste: `Sources/Paster.swift` — WhatsApp is a special path; do not “simplify” it back to AX insert
 - Hotkey / Fn vs macOS Dictation: `Sources/HotkeyManager.swift`, `Sources/SystemConflictGuard.swift`
-- Gemini STT: `Sources/CloudTranscriptionService.swift` (inline WAV → `gemini-3.5-transcribe`)
+- Groq STT: `Sources/CloudTranscriptionService.swift` (WAV multipart → `whisper-large-v3`)
 
 ## Running and verifying
 
@@ -26,8 +26,8 @@ macOS menu-bar dictation: hold Fn, record locally, Google Gemini STT (`gemini-3.
 
 ## Conventions that differ from defaults
 
-- Settings UI supports **Gemini | Groq** switch (same Fn/paste/Dictionary shell). Live STT is Gemini-only.
-- Dictation is batch by default: WAV is local until stop, then one upload (or Live race when enabled on Gemini). Double-tap Fn is hands-free recording, not live captions in the caret.
+- Settings is Groq-only (API key + Test/Save). Correction is an explicit menu/Settings toggle — do not force-enable it when the Groq key is saved.
+- Dictation is batch: WAV is local until stop, then one Groq Whisper upload. Tap-Fn is hands-free recording, not live captions in the caret.
 
 ## Known pitfalls
 

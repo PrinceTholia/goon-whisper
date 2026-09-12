@@ -25,6 +25,10 @@ struct LLMProvider: Identifiable, Hashable {
 /// Supported provider presets — add more as needed
 enum LLMRegistry {
     static let all: [LLMProvider] = [
+        LLMProvider(id: "groq", name: "Groq",
+                    defaultEndpoint: "https://api.groq.com/openai/v1/chat/completions",
+                    defaultModel: "llama-3.3-70b-versatile",
+                    envKey: "GROQ_API_KEY", style: .openAI),
         LLMProvider(id: "deepseek", name: "DeepSeek",
                     defaultEndpoint: "https://api.deepseek.com/chat/completions",
                     defaultModel: "deepseek-chat",
@@ -33,18 +37,10 @@ enum LLMRegistry {
                     defaultEndpoint: "https://api.openai.com/v1/chat/completions",
                     defaultModel: "gpt-4o-mini",
                     envKey: "OPENAI_API_KEY", style: .openAI),
-        LLMProvider(id: "groq", name: "Groq",
-                    defaultEndpoint: "https://api.groq.com/openai/v1/chat/completions",
-                    defaultModel: "llama-3.3-70b-versatile",
-                    envKey: "GROQ_API_KEY", style: .openAI),
         LLMProvider(id: "openrouter", name: "OpenRouter",
                     defaultEndpoint: "https://openrouter.ai/api/v1/chat/completions",
-                    defaultModel: "google/gemini-2.0-flash-001",
+                    defaultModel: "openai/gpt-4o-mini",
                     envKey: "OPENROUTER_API_KEY", style: .openAI),
-        LLMProvider(id: "gemini", name: "Google Gemini",
-                    defaultEndpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                    defaultModel: "gemini-2.5-flash",
-                    envKey: "GEMINI_API_KEY", style: .openAI),
         LLMProvider(id: "anthropic", name: "Anthropic (Claude)",
                     defaultEndpoint: "https://api.anthropic.com/v1/messages",
                     defaultModel: "claude-haiku-4-5",
@@ -74,7 +70,7 @@ enum LLMSettings {
     private static let providerKey = "llm.provider"
 
     static var providerID: String {
-        get { defaults.string(forKey: providerKey) ?? "gemini" }
+        get { defaults.string(forKey: providerKey) ?? "groq" }
         set { defaults.set(newValue, forKey: providerKey) }
     }
 

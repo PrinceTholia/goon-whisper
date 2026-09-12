@@ -26,7 +26,7 @@ enum FocusMemory {
         return app
     }
 
-    /// Frontmost app name at capture time — light vocabulary bias (like Gemini screen context lite).
+    /// Frontmost app name at capture time — light vocabulary bias.
     static var lastAppName: String? {
         current?.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -94,8 +94,11 @@ enum Paster {
     static var isAccessibilityTrusted: Bool { canUseAccessibilityAPIs }
 
     @discardableResult
-    static func paste(_ text: String) -> PasteOutcome {
-        guard !text.isEmpty else { return .copiedOnly }
+    static func paste(_ text: String, completion: ((PasteOutcome) -> Void)? = nil) -> PasteOutcome {
+        guard !text.isEmpty else {
+            DispatchQueue.main.async { completion?(.copiedOnly) }
+            return .copiedOnly
+        }
 
         pasteLock.lock()
         pasteGeneration &+= 1
@@ -108,18 +111,20 @@ enum Paster {
 
         let target = FocusMemory.activateCaptured()
         if target?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            DispatchQueue.main.async { completion?(.copiedOnly) }
             return .copiedOnly
         }
 
         if isTerminalApp(target) {
-            pasteIntoTerminal(app: target, generation: generation)
+            pasteIntoTerminal(app: target, generation: generation, completion: completion)
             return .inserted
         }
 
         // WebViews / Electron: AX insert is unreliable (false success or no-op).
         // Activate remembered app first, then single delayed ⌘V — never follow with System Events.
         if prefersCommandVOnly(target) {
-            pasteCommandVOnly(delay: 0.22, generation: generation, label: target?.localizedName ?? "web")
+            pasteCommandVOnly(delay: 0.22, generation: generation, label: target?.localizedName ?? "web",
+                              completion: completion)
             return .inserted
         }
 
@@ -129,11 +134,13 @@ enum Paster {
             FocusMemory.activateCaptured()
             if insertViaAccessibility(text) {
                 print("✅ Paste via AX insert")
+                completion?(.inserted)
                 return
             }
             guard Self.isCurrentPaste(generation) else { return }
             simulateCommandV()
             print("✅ Paste via ⌘V")
+            completion?(.inserted)
         }
         return .inserted
     }
@@ -145,7 +152,8 @@ enum Paster {
         return ok
     }
 
-    private static func pasteCommandVOnly(delay: TimeInterval, generation: UInt64, label: String) {
+    private static func pasteCommandVOnly(delay: TimeInterval, generation: UInt64, label: String,
+                                          completion: ((PasteOutcome) -> Void)? = nil) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard isCurrentPaste(generation) else { return }
             FocusMemory.activateCaptured()
@@ -154,6 +162,7 @@ enum Paster {
                 guard isCurrentPaste(generation) else { return }
                 simulateCommandV()
                 print("✅ \(label) paste via ⌘V only")
+                completion?(.inserted)
             }
         }
     }
@@ -190,7 +199,8 @@ enum Paster {
             || name.contains("wezterm") || name.contains("hyper")
     }
 
-    private static func pasteIntoTerminal(app: NSRunningApplication?, generation: UInt64) {
+    private static func pasteIntoTerminal(app: NSRunningApplication?, generation: UInt64,
+                                          completion: ((PasteOutcome) -> Void)? = nil) {
         let processName = app?.localizedName ?? "Terminal"
         app?.activate(options: [.activateIgnoringOtherApps])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -198,14 +208,17 @@ enum Paster {
             // One strategy only — stop after the first success
             if pasteViaMenu(processName: processName) {
                 print("✅ Terminal paste via Edit → Paste")
+                completion?(.inserted)
                 return
             }
             if pasteViaSystemEvents(processName: processName) {
                 print("✅ Terminal paste via System Events")
+                completion?(.inserted)
                 return
             }
             simulateCommandV()
             print("✅ Terminal paste via ⌘V")
+            completion?(.inserted)
         }
     }
 
@@ -281,6 +294,25 @@ enum Paster {
         usleep(12_000)
         up.post(tap: .cghidEventTap)
         print("✅ Simulated Return (send)")
+    }
+
+    /// Wait until the captured app is frontmost, then Return. Never fire blindly if it never fronts.
+    static func simulateReturnWhenFocused(timeout: TimeInterval = 0.8) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func poll() {
+            guard let target = FocusMemory.current else { return }
+            if target.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+            if target.isActive {
+                simulateReturn()
+                return
+            }
+            FocusMemory.activateCaptured()
+            if Date() < deadline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
+            }
+        }
+        FocusMemory.activateCaptured()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: poll)
     }
 
     @discardableResult

@@ -18,7 +18,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     private var toggleItem: NSMenuItem!
     private var cloudItem: NSMenuItem!
-    private var liveItem: NSMenuItem!
     private var correctionItem: NSMenuItem!
     private var backtrackItem: NSMenuItem!
     private var langMenu: NSMenu!
@@ -26,7 +25,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         KeyStore.prewarm()
-        // Keep STT + LLM on the same provider family (gemini | groq).
         Self.syncCloudProviders()
         setupStatusItem()
         setupPanel()
@@ -101,14 +99,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         cloudItem = NSMenuItem(title: "STT: Cloud", action: #selector(toggleCloud), keyEquivalent: "")
         cloudItem.target = self
-        liveItem = NSMenuItem(title: "Live STT (Gemini)", action: #selector(toggleLive), keyEquivalent: "")
-        liveItem.target = self
         correctionItem = NSMenuItem(title: "AI Correction", action: #selector(toggleCorrection), keyEquivalent: "")
         correctionItem.target = self
         backtrackItem = NSMenuItem(title: "Backtrack", action: #selector(toggleBacktrack), keyEquivalent: "")
         backtrackItem.target = self
         menu.addItem(cloudItem)
-        menu.addItem(liveItem)
         menu.addItem(correctionItem)
         menu.addItem(backtrackItem)
         menu.addItem(.separator())
@@ -177,9 +172,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         let bt = UserDefaults.standard.bool(forKey: "backtrackEnabled")
         if controller.useBacktrack != bt { controller.useBacktrack = bt }
 
-        // Settings may flip Live / Correction when switching providers
-        let liveUD = UserDefaults.standard.object(forKey: "useLiveSTT") as? Bool ?? false
-        if controller.useLiveSTT != liveUD { controller.useLiveSTT = liveUD }
         if UserDefaults.standard.object(forKey: "useCorrection") != nil {
             let corrUD = UserDefaults.standard.bool(forKey: "useCorrection")
             if controller.useCorrection != corrUD { controller.useCorrection = corrUD }
@@ -197,10 +189,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             UserDefaults.standard.set(true, forKey: "groqLargeV3Migrate")
         }
         cloudItem.state = controller.useCloudSTT ? .on : .off
-        cloudItem.title = "STT: Cloud (\(STTSettings.current.name))"
-        liveItem.state = controller.useLiveSTT ? .on : .off
-        liveItem.title = "Live STT (streaming)"
-        liveItem.isEnabled = controller.useCloudSTT && STTSettings.current.style == .gemini
+        cloudItem.title = "STT: Cloud (Groq)"
         correctionItem.state = controller.useCorrection ? .on : .off
         correctionItem.title = "AI Correction (\(LLMSettings.current.name))"
         backtrackItem.state = controller.useBacktrack ? .on : .off
@@ -213,22 +202,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
-    /// Gemini↔Groq: STT and LLM always share the same family.
+    /// Product path is Groq-only — pin STT + correction regardless of leftover UserDefaults.
     private static func syncCloudProviders() {
-        switch STTSettings.providerID {
-        case "groq":
-            LLMSettings.providerID = "groq"
-        case "gemini":
-            LLMSettings.providerID = "gemini"
-        default:
-            STTSettings.providerID = "gemini"
-            LLMSettings.providerID = "gemini"
-        }
+        STTSettings.providerID = "groq"
+        LLMSettings.providerID = "groq"
     }
 
-    @objc private func toggleAction() { controller.toggle() }
+    @objc private func toggleAction() {
+        if controller.isRecording || controller.handsFreeUI || controller.isBusy {
+            HotkeyManager.shared.endHandsFreeSession()
+            controller.handsFreeUI = false
+            if controller.isRecording || controller.stage == .recording {
+                controller.stop()
+            } else if controller.processing {
+                // Menu "Stop" during cleanup: leave the in-flight generation to finish.
+            }
+        } else {
+            controller.start()
+        }
+    }
     @objc private func toggleCloud() { controller.useCloudSTT.toggle(); updateStates() }
-    @objc private func toggleLive() { controller.useLiveSTT.toggle(); updateStates() }
     @objc private func toggleCorrection() { controller.useCorrection.toggle(); updateStates() }
     @objc private func toggleBacktrack() {
         controller.useBacktrack.toggle()
@@ -242,7 +235,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     @objc private func openSettings() {
         if settingsWindow == nil {
             let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 760),
+                contentRect: NSRect(x: 0, y: 0, width: 460, height: 680),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Whisper Settings"
             w.contentView = NSHostingView(rootView: SettingsView())
@@ -484,6 +477,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
 
         mgr.onHandsFreeCancel = { [weak self] in
+            DispatchQueue.main.async {
+                self?.controller.cancelRecording()
+            }
+        }
+
+        mgr.onProcessingCancel = { [weak self] in
             DispatchQueue.main.async {
                 self?.controller.cancelRecording()
             }

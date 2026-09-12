@@ -39,16 +39,16 @@ enum DictationAPIError: Error, Equatable {
         case .noAPIKey(let p):
             return "No API key for \(p). Open Settings and paste your \(STTSettings.current.name) key."
         case .invalidKey:
-            return "API rejected the key. Check Settings (Gemini: aistudio.google.com/apikey · Groq: console.groq.com)."
+            return "API rejected the key. Check Settings and paste a Groq key from console.groq.com."
         case .network(let m):
             return "Network error: \(m)"
         case .rateLimited(let sec, let detail):
             let s = Int(ceil(sec))
-            return "\(STTSettings.current.name) rate limit hit. Wait ~\(s)s or switch provider in Settings. \(detail)"
+            return "\(STTSettings.current.name) rate limit hit. Wait ~\(s)s, then dictate again. \(detail)"
         case .http(let status, let message, let retry):
             if status == 429 {
                 let s = Int(ceil(retry ?? 60))
-                return "Rate limited (HTTP 429). Wait ~\(s)s or switch provider in Settings. \(message)"
+                return "Rate limited (HTTP 429). Wait ~\(s)s, then dictate again. \(message)"
             }
             return "HTTP \(status): \(message)"
         case .emptyResponse:
