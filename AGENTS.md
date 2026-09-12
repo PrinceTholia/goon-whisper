@@ -39,6 +39,13 @@ macOS menu-bar dictation: hold Fn, record locally, Groq Whisper STT (`whisper-la
 
 <!-- /bmad:context -->
 
-## Agent habit
+## Agent habit (also for other models)
 
-Always discuss trade-offs before changing behavior (lag, accuracy, battery, extra APIs). See `.cursor/rules/discuss-tradeoffs.mdc`.
+Portable copy for Claude / any chat: **`HOW_I_WORK.md`**.
+
+Cursor always-on rules (this repo):
+
+- `.cursor/rules/reply-style.mdc` — how to structure replies
+- `.cursor/rules/discuss-tradeoffs.mdc` — options + costs before changing behavior
+
+Anyone cloning this repo gets those files. Paste `HOW_I_WORK.md` into other products.
