@@ -191,14 +191,14 @@ class DictationController: ObservableObject {
         case .failure(let err):
             failOnMain(err, generation: generation)
         case .success(let raw):
-            let text = SpokenCommands.apply(stripSoundAnnotations(raw))
+            let text = stripSoundAnnotations(raw)
             let useful = text.replacingOccurrences(of: " ", with: "")
                 .replacingOccurrences(of: "\t", with: "")
             guard !useful.isEmpty else {
                 failOnMain(.emptyResponse, generation: generation)
                 return
             }
-            if useCorrection, text.contains(where: { $0.isLetter || $0.isNumber }) {
+            if useCorrection {
                 DispatchQueue.main.async {
                     guard self.sessionGeneration == generation else { return }
                     self.status = "✨ AI correction…"
@@ -235,7 +235,12 @@ class DictationController: ObservableObject {
         DispatchQueue.main.async {
             guard self.sessionGeneration == generation else { return }
             self.clearRateLimitCountdown()
-            let final = SpokenCommands.apply(CorrectionDictionary.shared.apply(to: text))
+            // LLM already handled spoken commands when correction ran.
+            // Local rules are only the fallback when Correction is off or failed.
+            var final = CorrectionDictionary.shared.apply(to: text)
+            if correctionSkipped || !self.useCorrection {
+                final = SpokenCommands.apply(final)
+            }
             let wantEnter = self.sendEnterAfterPaste
             self.sendEnterAfterPaste = false
 

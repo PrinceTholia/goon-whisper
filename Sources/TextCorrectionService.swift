@@ -48,8 +48,31 @@ class TextCorrectionService: ObservableObject {
         - Do NOT add new content, summarize, translate, or change word endings/speaker gender
         - Preserve acronyms and initialisms exactly (STD vs STT, API, etc.) unless the user's dictionary maps them or sentence meaning is unambiguous
         - Return ONLY the corrected text — no explanations, no quotation marks
-        - Do not turn a lone comma into ",." or add a period after spoken punctuation already converted to , ? ! or a newline
         \(langHint)
+        """
+
+        systemPrompt += """
+
+
+        SPOKEN COMMANDS: If the speaker names a symbol, output the symbol — not the words.
+        next line / new line → a real newline
+        comma / coma → ,
+        period / full stop → .
+        slash → /
+        backslash → \\
+        plus → +
+        minus / dash / hyphen → -
+        equals / equal → =
+        asterisk / star → *
+        question mark → ?
+        exclamation mark / point → !
+        colon → :
+        semicolon → ;
+        open paren / close paren → ( )
+        quote → "
+        Keep the word when it is normal English ("a period of time", "plus tax").
+        If the whole utterance is only a command, return only that character.
+        Do not add a leftover period (never ",." or "\\n.").
         """
 
         if backtrack {
