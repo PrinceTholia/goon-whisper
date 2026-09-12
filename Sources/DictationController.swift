@@ -233,7 +233,7 @@ class DictationController: ObservableObject {
         DispatchQueue.main.async {
             guard self.sessionGeneration == generation else { return }
             self.clearRateLimitCountdown()
-            let final = CorrectionDictionary.shared.apply(to: text)
+            let final = SpokenCommands.apply(CorrectionDictionary.shared.apply(to: text))
             let wantEnter = self.sendEnterAfterPaste
             self.sendEnterAfterPaste = false
 

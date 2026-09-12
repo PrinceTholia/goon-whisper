@@ -126,6 +126,7 @@ class CloudTranscriptionService {
             bits.append("Never invent credits, subtitles, channel plugs, or 'Subtitles by the Amara.org community'.")
             bits.append("Keep acronyms exactly as spoken; do not substitute similar letter sequences.")
             bits.append("Product names: Groq, Whisper.")
+            bits.append("If the speaker says comma, coma, next line, or new line, keep those words as spoken.")
         }
         var vocab = CorrectionDictionary.shared.vocabularyHints(limit: 50)
         for term in ["Groq", "Whisper", "API"] {

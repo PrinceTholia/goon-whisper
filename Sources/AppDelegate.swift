@@ -13,14 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private var cancellables = Set<AnyCancellable>()
 
     private var settingsWindow: NSWindow?
-    private var aboutWindow: NSWindow?
     private var dictionaryWindow: NSWindow?
-
-    private var toggleItem: NSMenuItem!
-    private var cloudItem: NSMenuItem!
-    private var correctionItem: NSMenuItem!
-    private var backtrackItem: NSMenuItem!
-    private var langMenu: NSMenu!
+    private var popover: NSPopover!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
@@ -38,12 +32,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                     systemSymbolName: Self.iconName(for: stage),
                     accessibilityDescription: "Whisper"
                 )
-                let hk = HotkeyManager.shared.currentConfig.displayString
-                if stage == .recording {
-                    self.toggleItem.title = "Stop Speaking (\(hk))"
-                } else if stage == .idle {
-                    self.toggleItem.title = "Start Speaking (\(hk))"
-                }
                 if stage == .idle {
                     self.hidePanel()
                 } else {
@@ -89,81 +77,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Whisper")
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePopover)
+        statusItem.button?.sendAction(on: [.leftMouseUp])
 
-        let menu = NSMenu()
-        let hk = HotkeyManager.shared.currentConfig.displayString
-        toggleItem = NSMenuItem(title: "Start Speaking (\(hk))", action: #selector(toggleAction), keyEquivalent: "")
-        toggleItem.target = self
-        menu.addItem(toggleItem)
-        menu.addItem(.separator())
-
-        cloudItem = NSMenuItem(title: "STT: Cloud", action: #selector(toggleCloud), keyEquivalent: "")
-        cloudItem.target = self
-        correctionItem = NSMenuItem(title: "AI Correction", action: #selector(toggleCorrection), keyEquivalent: "")
-        correctionItem.target = self
-        backtrackItem = NSMenuItem(title: "Backtrack", action: #selector(toggleBacktrack), keyEquivalent: "")
-        backtrackItem.target = self
-        menu.addItem(cloudItem)
-        menu.addItem(correctionItem)
-        menu.addItem(backtrackItem)
-        menu.addItem(.separator())
-
-        let langMenu = NSMenu()
-        let autoItem = NSMenuItem(title: Languages.auto.name, action: #selector(setLanguage(_:)), keyEquivalent: "")
-        autoItem.target = self
-        autoItem.representedObject = Languages.auto.code
-        langMenu.addItem(autoItem)
-        langMenu.addItem(.separator())
-        for lang in Languages.all {
-            let item = NSMenuItem(title: lang.name, action: #selector(setLanguage(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = lang.code
-            langMenu.addItem(item)
-        }
-        let langParent = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
-        langParent.submenu = langMenu
-        menu.addItem(langParent)
-        self.langMenu = langMenu
-        menu.addItem(.separator())
-
-        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        settings.target = self
-        settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        menu.addItem(settings)
-
-        let dictionary = NSMenuItem(title: "Dictionary…", action: #selector(openDictionary), keyEquivalent: "d")
-        dictionary.target = self
-        dictionary.image = NSImage(systemSymbolName: "text.book.closed", accessibilityDescription: nil)
-        menu.addItem(dictionary)
-
-        let ax = NSMenuItem(title: "Fix Accessibility…", action: #selector(fixAccessibility), keyEquivalent: "")
-        ax.target = self
-        ax.image = NSImage(systemSymbolName: "accessibility", accessibilityDescription: nil)
-        menu.addItem(ax)
-
-        let autoPaste = NSMenuItem(title: "Test Auto-Paste", action: #selector(testAutoPaste), keyEquivalent: "")
-        autoPaste.target = self
-        autoPaste.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
-        menu.addItem(autoPaste)
-
-        let about = NSMenuItem(title: "About Whisper", action: #selector(openAbout), keyEquivalent: "")
-        about.target = self
-        about.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
-        menu.addItem(about)
-
-        menu.addItem(.separator())
-
-        let restart = NSMenuItem(title: "Restart Whisper", action: #selector(restartApp), keyEquivalent: "r")
-        restart.target = self
-        restart.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
-        menu.addItem(restart)
-
-        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
-
-        menu.delegate = self
-        statusItem.menu = menu
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.animates = true
+        pop.contentSize = NSSize(width: 280, height: 210)
+        pop.contentViewController = NSHostingController(rootView: StatusPopoverView(
+            controller: controller,
+            onToggle: { [weak self] in
+                self?.popover.performClose(nil)
+                self?.toggleAction()
+            },
+            onSettings: { [weak self] in
+                self?.popover.performClose(nil)
+                self?.openSettings()
+            },
+            onDictionary: { [weak self] in
+                self?.popover.performClose(nil)
+                self?.openDictionary()
+            },
+            onQuit: { NSApp.terminate(nil) }
+        ))
+        popover = pop
         updateStates()
+    }
+
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            updateStates()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) { updateStates() }
@@ -179,7 +128,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         Self.syncCloudProviders()
 
-        // One-time: upgrade Groq turbo → large-v3 for accuracy
         if !UserDefaults.standard.bool(forKey: "groqLargeV3Migrate") {
             let groq = STTRegistry.provider(id: "groq")
             let saved = STTSettings.savedModel(for: groq)
@@ -187,18 +135,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 STTSettings.saveModel("whisper-large-v3", for: groq)
             }
             UserDefaults.standard.set(true, forKey: "groqLargeV3Migrate")
-        }
-        cloudItem.state = controller.useCloudSTT ? .on : .off
-        cloudItem.title = "STT: Cloud (Groq)"
-        correctionItem.state = controller.useCorrection ? .on : .off
-        correctionItem.title = "AI Correction (\(LLMSettings.current.name))"
-        backtrackItem.state = controller.useBacktrack ? .on : .off
-        backtrackItem.title = "Backtrack (self-corrections)"
-        let hk = HotkeyManager.shared.currentConfig.displayString
-        toggleItem.title = controller.isRecording ? "Stop Speaking (\(hk))" : "Start Speaking (\(hk))"
-        for item in langMenu.items {
-            let code = item.representedObject as? String
-            item.state = (code == controller.language) ? .on : .off
         }
     }
 
@@ -221,24 +157,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             controller.start()
         }
     }
-    @objc private func toggleCloud() { controller.useCloudSTT.toggle(); updateStates() }
-    @objc private func toggleCorrection() { controller.useCorrection.toggle(); updateStates() }
-    @objc private func toggleBacktrack() {
-        controller.useBacktrack.toggle()
-        updateStates()
-    }
-    @objc private func setLanguage(_ sender: NSMenuItem) {
-        if let code = sender.representedObject as? String { controller.language = code }
-        updateStates()
-    }
-
     @objc private func openSettings() {
         if settingsWindow == nil {
             let w = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 460, height: 680),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Whisper Settings"
-            w.contentView = NSHostingView(rootView: SettingsView())
+            w.contentView = NSHostingView(rootView: SettingsView(controller: controller))
             w.isReleasedWhenClosed = false
             w.delegate = self
             w.center()
@@ -247,23 +172,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
-    }
-
-    @objc private func openAbout() {
-        if aboutWindow == nil {
-            let w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 340, height: 420),
-                styleMask: [.titled, .closable], backing: .buffered, defer: false)
-            w.title = "About Whisper"
-            w.contentView = NSHostingView(rootView: AboutView())
-            w.isReleasedWhenClosed = false
-            w.delegate = self
-            w.center()
-            aboutWindow = w
-        }
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        aboutWindow?.makeKeyAndOrderFront(nil)
     }
 
     @objc private func openDictionary() {
@@ -283,81 +191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         dictionaryWindow?.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func fixAccessibility() {
-        if Paster.isAccessibilityTrusted {
-            let alert = NSAlert()
-            alert.messageText = "Accessibility looks enabled"
-            alert.informativeText = "Click a text field in another app, then use Test Auto-Paste. If that still fails: remove Whisper from Accessibility, add /Applications/Whisper.app again, then Restart Whisper. Also enable Automation → System Events."
-            alert.addButton(withTitle: "Test Auto-Paste")
-            alert.addButton(withTitle: "Open Settings")
-            alert.addButton(withTitle: "Cancel")
-            let r = alert.runModal()
-            if r == .alertFirstButtonReturn {
-                testAutoPaste()
-            } else if r == .alertSecondButtonReturn {
-                Paster.openAccessibilitySettings()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    Paster.openAutomationSettings()
-                }
-            }
-            return
-        }
-        Paster.openAccessibilitySettings()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            Paster.openAutomationSettings()
-        }
-        let alert = NSAlert()
-        alert.messageText = "Allow Whisper to auto-paste"
-        alert.informativeText = """
-        1. Accessibility → remove old Whisper rows → add /Applications/Whisper.app → ON
-        2. Automation → Whisper → enable System Events
-        3. Menu bar → Restart Whisper
-
-        After each rebuild you may need step 1 again (ad-hoc signature changes).
-        """
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    @objc private func testAutoPaste() {
-        FocusMemory.capture()
-        let outcome = Paster.paste("Whisper auto-paste OK")
-        switch outcome {
-        case .inserted:
-            controller.status = "Test paste sent — check the focused app"
-            controller.stage = .done("Test paste")
-        case .copiedOnly:
-            controller.status = "Test: focus another app’s text field first"
-            controller.stage = .copied
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self = self else { return }
-            if case .done = self.controller.stage { self.controller.stage = .idle }
-            if case .copied = self.controller.stage { self.controller.stage = .idle }
-        }
-    }
-
-    @objc private func restartApp() {
-        let path = Bundle.main.bundlePath
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        // "$1" keeps spaces/quotes safe — no string interpolation into the shell script body
-        task.arguments = ["-c", "sleep 0.6; exec /usr/bin/open \"$1\"", "--", path]
-        do {
-            try task.run()
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "Could not schedule restart"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
-            return
-        }
-        NSApp.terminate(nil)
-    }
-
     func windowWillClose(_ notification: Notification) {
         let win = notification.object as? NSWindow
-        if win === settingsWindow || win === aboutWindow || win === dictionaryWindow {
+        if win === settingsWindow || win === dictionaryWindow {
             NSApp.setActivationPolicy(.accessory)
         }
     }

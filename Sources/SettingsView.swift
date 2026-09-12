@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var controller: DictationController
+
     // Hotkey
     @State private var hotkeyConfig = HotkeyManager.shared.currentConfig
     @State private var isRecordingHotkey = false
@@ -54,7 +56,15 @@ struct SettingsView: View {
                             HotkeyManager.shared.updateConfig(hotkeyConfig)
                         }
 
-                    Text("When hold is on: hold = push-to-talk, quick tap = hands-free. When off: tap Fn toggles recording.")
+                    Picker("Language", selection: $controller.language) {
+                        Text(Languages.auto.name).tag(Languages.auto.code)
+                        ForEach(Languages.all, id: \.code) { lang in
+                            Text(lang.name).tag(lang.code)
+                        }
+                    }
+                    .font(.caption)
+
+                    Text("Say “next line” for a newline, “comma” for ,")
                         .font(.caption2).foregroundColor(.secondary)
                 }
                 .onChange(of: hotkeyConfig.keyCode) { _ in HotkeyManager.shared.updateConfig(hotkeyConfig) }
