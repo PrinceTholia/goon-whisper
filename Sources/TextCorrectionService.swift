@@ -48,6 +48,7 @@ class TextCorrectionService: ObservableObject {
         - Do NOT add new content, summarize, translate, or change word endings/speaker gender
         - Preserve acronyms and initialisms exactly (STD vs STT, API, etc.) unless the user's dictionary maps them or sentence meaning is unambiguous
         - Return ONLY the corrected text — no explanations, no quotation marks
+        - Do not turn a lone comma into ",." or add a period after spoken punctuation already converted to , ? ! or a newline
         \(langHint)
         """
 

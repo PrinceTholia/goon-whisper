@@ -191,12 +191,14 @@ class DictationController: ObservableObject {
         case .failure(let err):
             failOnMain(err, generation: generation)
         case .success(let raw):
-            let text = stripSoundAnnotations(raw)
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let text = SpokenCommands.apply(stripSoundAnnotations(raw))
+            let useful = text.replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "\t", with: "")
+            guard !useful.isEmpty else {
                 failOnMain(.emptyResponse, generation: generation)
                 return
             }
-            if useCorrection {
+            if useCorrection, text.contains(where: { $0.isLetter || $0.isNumber }) {
                 DispatchQueue.main.async {
                     guard self.sessionGeneration == generation else { return }
                     self.status = "✨ AI correction…"
