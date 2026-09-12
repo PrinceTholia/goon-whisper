@@ -38,3 +38,7 @@ macOS menu-bar dictation: hold Fn, record locally, Groq Whisper STT (`whisper-la
 - The app does not auto-open the Groq keys page; tell people to visit https://console.groq.com/keys then paste into Settings.
 
 <!-- /bmad:context -->
+
+## Agent habit
+
+Always discuss trade-offs before changing behavior (lag, accuracy, battery, extra APIs). See `.cursor/rules/discuss-tradeoffs.mdc`.

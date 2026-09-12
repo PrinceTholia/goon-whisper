@@ -1,43 +1,54 @@
 import Foundation
 
-/// Spoken punctuation → real characters. Local only — no extra API, no added lag.
-///
-/// Whisper almost always appends a sentence period ("Comma." / "Next line.").
-/// That period is consumed with the command so you do not get ",." or a stray ".".
+/// Spoken symbol names → characters. Local backup after STT / LLM.
+/// Longer phrases first. Optional Whisper period after the command is eaten.
 enum SpokenCommands {
     static func apply(_ text: String) -> String {
         var s = text
-
-        // Optional leftover STT period/comma after the command word.
+        let tail = #"[[:space:]]*[.,]?"#
         let replacements: [(String, String)] = [
-            (#"(?i)\bnext[\s-]+line\b[[:space:]]*[.,]?"#, "\n"),
-            (#"(?i)\bnew[\s-]+line\b[[:space:]]*[.,]?"#, "\n"),
-            (#"(?i)\bnewline\b[[:space:]]*[.,]?"#, "\n"),
-            (#"(?i)\bcoma\b[[:space:]]*[.,]?"#, ","),
-            (#"(?i)\bcomma\b[[:space:]]*[.,]?"#, ","),
-            (#"(?i)\bquestion\s+mark\b[[:space:]]*[.,]?"#, "?"),
-            (#"(?i)\bexclamation\s+(?:mark|point)\b[[:space:]]*[.,]?"#, "!"),
-            (#"(?i)\bfull\s+stop\b[[:space:]]*[.,]?"#, "."),
+            (#"(?i)\bnext[\s-]+line\b"# + tail, "\n"),
+            (#"(?i)\bnew[\s-]+line\b"# + tail, "\n"),
+            (#"(?i)\bnewline\b"# + tail, "\n"),
+            (#"(?i)\bat[\s-]+the[\s-]+rate(?:\s+sign)?\b"# + tail, "@"),
+            (#"(?i)\bat[\s-]+sign\b"# + tail, "@"),
+            (#"(?i)\bdollar\s+sign\b"# + tail, "$"),
+            (#"(?i)\bpercentage\s+sign\b"# + tail, "%"),
+            (#"(?i)\bpercent\s+sign\b"# + tail, "%"),
+            (#"(?i)\bampersand(?:\s+sign)?\b"# + tail, "&"),
+            (#"(?i)\basterisk(?:\s+sign)?\b"# + tail, "*"),
+            (#"(?i)\bquestion\s+mark\b"# + tail, "?"),
+            (#"(?i)\bexclamation\s+(?:mark|point)\b"# + tail, "!"),
+            (#"(?i)\bfull\s+stop\b"# + tail, "."),
+            (#"(?i)\bforward\s+slash\b"# + tail, "/"),
+            (#"(?i)\bback\s*slash\b"# + tail, "\\"),
+            (#"(?i)\bslash\b"# + tail, "/"),
+            (#"(?i)\bhyphen\b"# + tail, "-"),
+            (#"(?i)\bdash\b"# + tail, "-"),
+            (#"(?i)\bequals?(?:\s+sign)?\b"# + tail, "="),
+            (#"(?i)\bplus(?:\s+sign)?\b"# + tail, "+"),
+            (#"(?i)\bminus(?:\s+sign)?\b"# + tail, "-"),
+            (#"(?i)\bstar\b"# + tail, "*"),
+            (#"(?i)\bcoma\b"# + tail, ","),
+            (#"(?i)\bcomma\b"# + tail, ","),
+            (#"(?i)\bcolon\b"# + tail, ":"),
+            (#"(?i)\bsemicolon\b"# + tail, ";"),
         ]
         for (pattern, replacement) in replacements {
             s = s.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
 
-        // If the whole take was just "comma." / "next line."
         if s.trimmingCharacters(in: .whitespacesAndNewlines) == ",." {
             return ","
         }
 
-        // "hello ," → "hello,"
         s = s.replacingOccurrences(of: #"\s+([,?.!])"#, with: "$1", options: .regularExpression)
-        // Do not insert a space before a leftover period we are about to drop
         s = s.replacingOccurrences(of: #",\s*\.(?=\s|$)"#, with: ",", options: .regularExpression)
         s = s.replacingOccurrences(of: #"\n\s*\.(?=\s|$)"#, with: "\n", options: .regularExpression)
-        // "hello,world" → "hello, world" (not before newline)
         s = s.replacingOccurrences(of: #"([,?!])([^\s\n])"#, with: "$1 $2", options: .regularExpression)
         s = s.replacingOccurrences(of: #"[ \t]+\n"#, with: "\n", options: .regularExpression)
         s = s.replacingOccurrences(of: #"\n[ \t]+"#, with: "\n", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
         return s
     }
 }

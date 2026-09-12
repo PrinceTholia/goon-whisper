@@ -235,12 +235,8 @@ class DictationController: ObservableObject {
         DispatchQueue.main.async {
             guard self.sessionGeneration == generation else { return }
             self.clearRateLimitCountdown()
-            // LLM already handled spoken commands when correction ran.
-            // Local rules are only the fallback when Correction is off or failed.
-            var final = CorrectionDictionary.shared.apply(to: text)
-            if correctionSkipped || !self.useCorrection {
-                final = SpokenCommands.apply(final)
-            }
+            // Dictionary, then spoken symbols (backup if the LLM left the words).
+            let final = SpokenCommands.apply(CorrectionDictionary.shared.apply(to: text))
             let wantEnter = self.sendEnterAfterPaste
             self.sendEnterAfterPaste = false
 

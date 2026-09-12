@@ -7,6 +7,9 @@ enum FeedbackSound {
     private static let enabledKey = "feedbackSoundEnabled"
     private static var startURL: URL { URL(fileURLWithPath: KeyStore.dir + "/chime-start.wav") }
     private static var stopURL: URL  { URL(fileURLWithPath: KeyStore.dir + "/chime-stop.wav") }
+    /// Kept alive — NSSound.play() is async; a throwaway instance is often silent on first press.
+    private static var startSound: NSSound?
+    private static var stopSound: NSSound?
 
     static var isEnabled: Bool {
         get {
@@ -16,16 +19,27 @@ enum FeedbackSound {
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
     }
 
+    /// Load pips into memory (not the mic). Call once at launch so the first Fn can beep.
+    static func preload() {
+        ensureChimes()
+        if startSound == nil { startSound = NSSound(contentsOf: startURL, byReference: true) }
+        if stopSound == nil { stopSound = NSSound(contentsOf: stopURL, byReference: true) }
+    }
+
     static func playStart() {
         guard isEnabled else { return }
-        ensureChimes()
-        NSSound(contentsOf: startURL, byReference: true)?.play()
+        preload()
+        startSound?.stop()
+        startSound?.currentTime = 0
+        startSound?.play()
     }
 
     static func playStop() {
         guard isEnabled else { return }
-        ensureChimes()
-        NSSound(contentsOf: stopURL, byReference: true)?.play()
+        preload()
+        stopSound?.stop()
+        stopSound?.currentTime = 0
+        stopSound?.play()
     }
 
     private static func ensureChimes() {

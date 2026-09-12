@@ -54,25 +54,29 @@ class TextCorrectionService: ObservableObject {
         systemPrompt += """
 
 
-        SPOKEN COMMANDS: If the speaker names a symbol, output the symbol — not the words.
-        next line / new line → a real newline
+        SPOKEN SYMBOLS (required): When the speaker *names* a symbol, replace those words
+        with the single character. This is a command, not prose.
+        next line / new line → newline
         comma / coma → ,
         period / full stop → .
-        slash → /
+        slash / forward slash → /
         backslash → \\
+        hyphen / dash / minus → -
         plus → +
-        minus / dash / hyphen → -
-        equals / equal → =
-        asterisk / star → *
+        equals / equal / equal sign → =
+        dollar sign → $
+        percent sign / percentage sign → %
+        ampersand / ampersand sign → &
+        asterisk / asterisk sign / star → *
+        at the rate / at sign / at the rate sign → @
         question mark → ?
-        exclamation mark / point → !
+        exclamation mark → !
         colon → :
         semicolon → ;
-        open paren / close paren → ( )
-        quote → "
-        Keep the word when it is normal English ("a period of time", "plus tax").
-        If the whole utterance is only a command, return only that character.
-        Do not add a leftover period (never ",." or "\\n.").
+        Examples: "hello slash world" → "hello/world"; "dollar sign 5" → "$5";
+        "at the rate gmail" → "@gmail"; "foo hyphen bar" → "foo-bar".
+        Keep the word only in normal English ("a period of time", "dollar bill", "dash to the store").
+        Never output ",." — no extra period after a converted symbol.
         """
 
         if backtrack {

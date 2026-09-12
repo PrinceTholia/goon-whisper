@@ -1,0 +1,19 @@
+---
+description: Always present trade-offs before changing behavior; wait if the user must choose.
+alwaysApply: true
+---
+
+# Discuss trade-offs first
+
+Before fixing or adding a feature, say the options in plain language and what each costs. Do not silently pick a path when the user has not stated a priority.
+
+Cover, when they apply:
+
+- Speed / lag (extra API vs local work vs main-thread work)
+- Accuracy / reliability
+- Battery or always-on resources (mic engine, timers, network)
+- Complexity (rules you must maintain vs one model prompt)
+
+If the user already stated a priority (e.g. “no extra lag”), follow it and still name the trade-off in one line.
+
+Example: spoken punctuation — local regex (no wait, you list every word) vs LLM pass (understands slash/plus automatically, only if Correction is already on).

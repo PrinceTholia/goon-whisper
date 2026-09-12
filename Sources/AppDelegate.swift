@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
         KeyStore.prewarm()
+        FeedbackSound.preload()
         Self.syncCloudProviders()
         setupStatusItem()
         setupPanel()
